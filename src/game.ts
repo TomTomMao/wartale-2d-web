@@ -19,6 +19,7 @@ export class GameScene extends Phaser.Scene {
   private encounterEnemy?: WorldEnemy;
   private round = 1;
   private battleMessage?: Phaser.GameObjects.Text;
+  private movementRange?: Phaser.GameObjects.Arc;
   private discoveryCooldown = new Set<string>();
 
   constructor() { super('game'); }
@@ -37,6 +38,8 @@ export class GameScene extends Phaser.Scene {
     this.children.removeAll(true);
     this.enemySprites.clear();
     this.battleSprites.clear();
+    this.movementRange?.destroy();
+    this.movementRange = undefined;
     this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     this.cameras.main.setZoom(1);
@@ -237,8 +240,14 @@ export class GameScene extends Phaser.Scene {
     for (const unit of this.battleUnits) this.createBattleUnitSprite(unit);
     this.battleMessage = this.add.text(w / 2, 32, '', { fontFamily: 'Georgia', fontSize: '20px', color: '#f6e8bf', backgroundColor: '#1a1815cc', padding: { x: 12, y: 7 } }).setOrigin(0.5).setDepth(100);
     this.refreshBattleHud();
+    this.showBattleMessage('Select a blue mercenary, then click inside the blue movement circle.');
     this.input.removeAllListeners('pointerdown');
-    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => this.onBattlePointer(p));
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer, currentlyOver: Phaser.GameObjects.GameObject[]) => {
+      // Clicking an interactive unit is handled by that unit. Do not also treat
+      // the same click as a ground-movement command.
+      if (currentlyOver.length > 0) return;
+      this.onBattlePointer(p);
+    });
     this.emit({ type: 'battle', round: this.round });
   }
 
@@ -260,6 +269,10 @@ export class GameScene extends Phaser.Scene {
     if (unit.side === 'player') {
       if (unit.acted) return;
       this.selectedUnitId = unit.id;
+      this.drawMovementRange(unit);
+      this.showBattleMessage(unit.moved
+        ? `${unit.name} has already moved. Choose an enemy to attack or end the unit.`
+        : `Selected ${unit.name}. Click inside the blue circle to move.`);
       this.refreshBattleHud();
       return;
     }
@@ -284,14 +297,28 @@ export class GameScene extends Phaser.Scene {
     selected.y = Phaser.Math.Clamp(p.worldY, 90, this.scale.height - 90);
     selected.moved = true;
     this.battleSprites.get(selected.id)?.setPosition(selected.x, selected.y);
+    this.movementRange?.destroy();
+    this.movementRange = undefined;
     this.showBattleMessage(`${selected.name} moved. Choose an enemy to attack, or end the unit.`);
     this.refreshBattleHud();
+  }
+
+  private drawMovementRange(unit: BattleUnit): void {
+    this.movementRange?.destroy();
+    this.movementRange = undefined;
+    if (unit.moved || unit.acted) return;
+    this.movementRange = this.add
+      .circle(unit.x, unit.y, unit.movement, 0x4aa3df, 0.12)
+      .setStrokeStyle(3, 0x82cfff, 0.9)
+      .setDepth(5);
   }
 
   endSelectedUnit(): void {
     const selected = this.battleUnits.find(u => u.id === this.selectedUnitId && u.side === 'player' && u.health > 0);
     if (!selected) return;
     selected.acted = true;
+    this.movementRange?.destroy();
+    this.movementRange = undefined;
     this.afterPlayerAction();
   }
 
@@ -300,12 +327,16 @@ export class GameScene extends Phaser.Scene {
     if (!selected) return;
     selected.armor = Math.min(selected.maxArmor + 5, selected.armor + 4);
     selected.acted = true;
+    this.movementRange?.destroy();
+    this.movementRange = undefined;
     this.showBattleMessage(`${selected.name} guards and gains 4 temporary armor.`);
     this.updateBattleSprite(selected);
     this.afterPlayerAction();
   }
 
   private afterPlayerAction(): void {
+    this.movementRange?.destroy();
+    this.movementRange = undefined;
     this.selectedUnitId = undefined;
     this.removeDeadUnits();
     if (this.checkBattleEnd()) return;
