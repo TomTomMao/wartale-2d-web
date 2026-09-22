@@ -24,7 +24,7 @@ function bootGame(): void {
     scene: [GameScene],
     physics: { default: 'arcade' },
     scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
-    render: { antialias: true }
+    render: { pixelArt: true, antialias: false, roundPixels: true }
   });
   const timer = window.setInterval(() => {
     const s = game?.scene.getScene('game');
