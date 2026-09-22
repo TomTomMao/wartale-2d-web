@@ -4,15 +4,12 @@ import { applyDamage, enemyBattleUnits, generateLoot, mercToBattleUnit, recordKi
 import { getState, saveGame } from './store';
 import type { BattleUnit, MercClass, WorldEnemy } from './types';
 import {
-  createPixelEnemy,
-  createPixelHumanoid,
   createPixelLocation,
-  createPixelParty,
-  createPixelWolf,
   drawPixelRock,
   drawPixelTerrain,
   drawPixelTree
 } from './pixelArt';
+import { classToKind, createActor, playActor, setWalk, type ActorKind } from './animatedSprites';
 
 const WORLD_EVENT = 'ironbound:ui';
 type Mode = 'world' | 'battle';
@@ -96,7 +93,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createParty(x: number, y: number): Phaser.GameObjects.Container {
-    return createPixelParty(this, x, y).setDepth(30);
+    const root = this.add.container(x, y).setDepth(30).setSize(92, 72);
+    const sword = createActor(this, 'swordsman', -28, 8, 1.0).setName('party-swordsman');
+    const ranger = createActor(this, 'ranger', 6, -8, 1.0).setName('party-ranger');
+    const warrior = createActor(this, 'warrior', 30, 10, 1.0).setName('party-warrior');
+    const banner = this.add.graphics();
+    banner.fillStyle(0x3b2a1d).fillRect(-2,-50,4,46);
+    banner.fillStyle(0xc69d46).fillRect(2,-48,22,13);
+    banner.fillStyle(0x8d3030).fillRect(2,-35,15,6);
+    root.add([sword,ranger,warrior,banner]);
+    return root;
   }
 
   private createLocation(loc: typeof LOCATIONS[number]): void {
@@ -119,9 +125,15 @@ export class GameScene extends Phaser.Scene {
 
   private createEnemies(): void {
     for (const e of getState().enemies.filter(e => e.alive)) {
-      const sprite = createPixelEnemy(this, e.kind, e.x, e.y, e.strength).setDepth(20);
-      sprite.setPosition(e.x - 18, e.y - 22);
-      this.enemySprites.set(e.id, sprite);
+      const kind: ActorKind = e.kind === 'wolf' ? 'wolf' : e.kind === 'raider' ? 'raider' : 'bandit';
+      const actor = createActor(this, kind, 0, 0, 1.12).setName('actor');
+      const badge = e.strength > 1
+        ? this.add.text(0,-34,'★'.repeat(Math.min(3,e.strength)),{fontFamily:'monospace',fontSize:'10px',color:'#f4c65d'}).setOrigin(.5)
+        : undefined;
+      const parts: Phaser.GameObjects.GameObject[] = [actor];
+      if (badge) parts.push(badge);
+      const container = this.add.container(e.x,e.y,parts).setDepth(20).setSize(58,64);
+      this.enemySprites.set(e.id, container);
     }
   }
 
@@ -134,12 +146,15 @@ export class GameScene extends Phaser.Scene {
     if (this.keys.S.isDown) dy += 1;
     if (this.keys.A.isDown) dx -= 1;
     if (this.keys.D.isDown) dx += 1;
+    let partyMoving = false;
     if (dx || dy) {
+      partyMoving = true;
       const len = Math.hypot(dx, dy);
       state.worldX += dx / len * speed * delta / 1000;
       state.worldY += dy / len * speed * delta / 1000;
       this.moveTarget = undefined;
     } else if (this.moveTarget) {
+      partyMoving = true;
       const vx = this.moveTarget.x - state.worldX;
       const vy = this.moveTarget.y - state.worldY;
       const d = Math.hypot(vx, vy);
@@ -153,6 +168,9 @@ export class GameScene extends Phaser.Scene {
     state.worldX = Phaser.Math.Clamp(state.worldX, 30, WORLD_WIDTH - 30);
     state.worldY = Phaser.Math.Clamp(state.worldY, 30, WORLD_HEIGHT - 30);
     this.party.setPosition(state.worldX, state.worldY);
+    for (const child of this.party.list) {
+      if (child instanceof Phaser.GameObjects.Sprite) setWalk(child, partyMoving);
+    }
     this.updateEnemies(delta);
     this.checkDiscoveries();
     this.checkEncounter();
@@ -178,6 +196,11 @@ export class GameScene extends Phaser.Scene {
       if (enemy.x < 300 || enemy.x > WORLD_WIDTH - 200) enemy.vx *= -1;
       if (enemy.y < 250 || enemy.y > WORLD_HEIGHT - 200) enemy.vy *= -1;
       sprite.setPosition(enemy.x, enemy.y);
+      const actor = sprite.getByName('actor');
+      if (actor instanceof Phaser.GameObjects.Sprite) {
+        setWalk(actor, Math.abs(enemy.vx) + Math.abs(enemy.vy) > 0.5);
+        actor.setFlipX(enemy.vx < 0);
+      }
     }
   }
 
@@ -261,34 +284,27 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createBattleUnitSprite(unit: BattleUnit): void {
-    let visual: Phaser.GameObjects.Container;
+    let kind: ActorKind;
     if (unit.side === 'player') {
       const merc = getState().mercenaries.find(m => m.id === unit.mercenaryId);
-      const cls: MercClass = merc?.class ?? 'Swordsman';
-      visual = createPixelHumanoid(this, cls, -18, -22, { scale: 4 });
-    } else if (this.encounterEnemy?.kind === 'wolf') {
-      visual = createPixelWolf(this, -20, -18, 4);
+      kind = classToKind(merc?.class ?? 'Swordsman');
     } else {
-      const cls: MercClass = this.encounterEnemy?.kind === 'raider' ? 'Warrior' : 'Rogue';
-      visual = createPixelHumanoid(this, cls, -18, -22, { enemy: true, scale: 4 });
+      kind = this.encounterEnemy?.kind === 'wolf' ? 'wolf' : this.encounterEnemy?.kind === 'raider' ? 'raider' : 'bandit';
     }
-
-    const label = this.add.text(0, -46, unit.name, {
+    const actor = createActor(this, kind, 0, 2, 1.35).setName('actor');
+    const label = this.add.text(0, -45, unit.name, {
       fontFamily: 'monospace', fontSize: '13px', color: '#fff4d0',
       backgroundColor: '#15120fdd', padding: { x: 4, y: 2 }
     }).setOrigin(0.5);
-    const hpBg = this.add.rectangle(0, 39, 58, 8, 0x24191a);
-    const hp = this.add.rectangle(-29, 39, 58, 8, 0xb4473f).setOrigin(0, 0.5).setName('hp');
-    const armor = this.add.rectangle(-29, 50, 58, 5, 0x5b88ad).setOrigin(0, 0.5).setName('armor');
-    const selection = this.add.rectangle(0, 4, 50, 58)
-      .setStrokeStyle(2, unit.side === 'player' ? 0x86c8ff : 0xdc7169, 0.8)
+    const hpBg = this.add.rectangle(0, 42, 60, 8, 0x24191a);
+    const hp = this.add.rectangle(-30, 42, 60, 8, 0xb4473f).setOrigin(0, 0.5).setName('hp');
+    const armor = this.add.rectangle(-30, 53, 60, 5, 0x5b88ad).setOrigin(0, 0.5).setName('armor');
+    const selection = this.add.rectangle(0, 5, 56, 65)
+      .setStrokeStyle(2, unit.side === 'player' ? 0x86c8ff : 0xdc7169, 0.75)
       .setFillStyle(0x000000, 0)
       .setName('selection');
-
-    const c = this.add.container(unit.x, unit.y, [selection, visual, label, hpBg, hp, armor])
-      .setDepth(20)
-      .setSize(72, 100)
-      .setInteractive({ useHandCursor: true });
+    const c = this.add.container(unit.x, unit.y, [selection, actor, label, hpBg, hp, armor])
+      .setDepth(20).setSize(76, 108).setInteractive({ useHandCursor: true });
     c.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, ev: Phaser.Types.Input.EventData) => {
       ev.stopPropagation();
       this.onUnitClicked(unit.id);
@@ -313,12 +329,27 @@ export class GameScene extends Phaser.Scene {
     if (!selected) return;
     const dist = Phaser.Math.Distance.Between(selected.x, selected.y, unit.x, unit.y);
     if (dist > 135) { this.showBattleMessage('Target is out of melee range. Move closer first.'); return; }
+    const attacker = this.battleSprites.get(selected.id);
+    const defender = this.battleSprites.get(unit.id);
+    const attackerActor = attacker?.getByName('actor');
+    const defenderActor = defender?.getByName('actor');
+    if (attackerActor instanceof Phaser.GameObjects.Sprite) {
+      attackerActor.setFlipX(unit.x < selected.x);
+      playActor(attackerActor, 'attack');
+    }
     const dmg = Math.max(1, selected.power + Phaser.Math.Between(-2, 3));
-    applyDamage(unit, dmg);
-    selected.acted = true;
-    this.showBattleMessage(`${selected.name} hits ${unit.name} for ${dmg}.`);
-    this.updateBattleSprite(unit);
-    this.afterPlayerAction();
+    this.time.delayedCall(180, () => {
+      applyDamage(unit, dmg);
+      if (defenderActor instanceof Phaser.GameObjects.Sprite) {
+        defenderActor.setTintFill(0xffffff);
+        playActor(defenderActor, unit.health <= 0 ? 'death' : 'hurt', unit.health > 0);
+        this.time.delayedCall(90, () => defenderActor.clearTint());
+      }
+      selected.acted = true;
+      this.showBattleMessage(`${selected.name} hits ${unit.name} for ${dmg}.`);
+      this.updateBattleSprite(unit);
+      this.afterPlayerAction();
+    });
   }
 
   private onBattlePointer(p: Phaser.Input.Pointer): void {
@@ -326,14 +357,27 @@ export class GameScene extends Phaser.Scene {
     if (!selected || selected.moved) return;
     const d = Phaser.Math.Distance.Between(selected.x, selected.y, p.worldX, p.worldY);
     if (d > selected.movement) { this.showBattleMessage('Destination is outside movement range.'); return; }
-    selected.x = Phaser.Math.Clamp(p.worldX, 60, this.scale.width - 60);
-    selected.y = Phaser.Math.Clamp(p.worldY, 90, this.scale.height - 90);
-    selected.moved = true;
-    this.battleSprites.get(selected.id)?.setPosition(selected.x, selected.y);
+    const nx = Phaser.Math.Clamp(p.worldX, 60, this.scale.width - 60);
+    const ny = Phaser.Math.Clamp(p.worldY, 90, this.scale.height - 90);
+    const container = this.battleSprites.get(selected.id);
+    const actor = container?.getByName('actor');
+    if (actor instanceof Phaser.GameObjects.Sprite) {
+      actor.setFlipX(nx < selected.x);
+      setWalk(actor, true);
+    }
+    selected.x = nx; selected.y = ny; selected.moved = true;
     this.movementRange?.destroy();
     this.movementRange = undefined;
-    this.showBattleMessage(`${selected.name} moved. Choose an enemy to attack, or end the unit.`);
-    this.refreshBattleHud();
+    if (container) {
+      this.tweens.add({
+        targets: container, x: nx, y: ny, duration: 260, ease: 'Sine.easeOut',
+        onComplete: () => {
+          if (actor instanceof Phaser.GameObjects.Sprite) setWalk(actor, false);
+          this.showBattleMessage(`${selected.name} moved. Choose an enemy to attack, or end the unit.`);
+          this.refreshBattleHud();
+        }
+      });
+    }
   }
 
   private drawMovementRange(unit: BattleUnit): void {
@@ -388,12 +432,28 @@ export class GameScene extends Phaser.Scene {
         const ang = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y);
         const step = Math.min(enemy.movement, Math.max(0, dist - 95));
         enemy.x += Math.cos(ang) * step; enemy.y += Math.sin(ang) * step;
-        this.battleSprites.get(enemy.id)?.setPosition(enemy.x, enemy.y);
+        const ec = this.battleSprites.get(enemy.id);
+        const ea = ec?.getByName('actor');
+        if (ea instanceof Phaser.GameObjects.Sprite) {
+          ea.setFlipX(target.x < enemy.x);
+          setWalk(ea, true);
+        }
+        ec?.setPosition(enemy.x, enemy.y);
+        if (ea instanceof Phaser.GameObjects.Sprite) setWalk(ea, false);
         dist = Phaser.Math.Distance.Between(enemy.x, enemy.y, target.x, target.y);
       }
       if (dist <= 125) {
+        const ec = this.battleSprites.get(enemy.id);
+        const tc = this.battleSprites.get(target.id);
+        const ea = ec?.getByName('actor');
+        const ta = tc?.getByName('actor');
+        if (ea instanceof Phaser.GameObjects.Sprite) {
+          ea.setFlipX(target.x < enemy.x);
+          playActor(ea, 'attack');
+        }
         const dmg = Math.max(1, enemy.power + Phaser.Math.Between(-2, 2));
         applyDamage(target, dmg);
+        if (ta instanceof Phaser.GameObjects.Sprite) playActor(ta, target.health <= 0 ? 'death' : 'hurt', target.health > 0);
         this.updateBattleSprite(target);
       }
     }
@@ -408,7 +468,11 @@ export class GameScene extends Phaser.Scene {
   private removeDeadUnits(): void {
     for (const u of this.battleUnits.filter(u => u.health <= 0)) {
       const s = this.battleSprites.get(u.id);
-      if (s?.active) s.setAlpha(0.25).disableInteractive();
+      if (s?.active) {
+        const actor = s.getByName('actor');
+        if (actor instanceof Phaser.GameObjects.Sprite) playActor(actor, 'death', false);
+        s.disableInteractive();
+      }
     }
   }
 
