@@ -2,7 +2,17 @@ import Phaser from 'phaser';
 import { LOCATIONS, WORLD_HEIGHT, WORLD_WIDTH } from './data';
 import { applyDamage, enemyBattleUnits, generateLoot, mercToBattleUnit, recordKill } from './domain';
 import { getState, saveGame } from './store';
-import type { BattleUnit, WorldEnemy } from './types';
+import type { BattleUnit, MercClass, WorldEnemy } from './types';
+import {
+  createPixelEnemy,
+  createPixelHumanoid,
+  createPixelLocation,
+  createPixelParty,
+  createPixelWolf,
+  drawPixelRock,
+  drawPixelTerrain,
+  drawPixelTree
+} from './pixelArt';
 
 const WORLD_EVENT = 'ironbound:ui';
 type Mode = 'world' | 'battle';
@@ -44,21 +54,27 @@ export class GameScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     this.cameras.main.setZoom(1);
 
-    const bg = this.add.graphics();
-    bg.fillStyle(0x566b3b).fillRect(0, 0, 1700, WORLD_HEIGHT);
-    bg.fillStyle(0x7a6846).fillRect(1700, 0, 650, WORLD_HEIGHT);
-    bg.fillStyle(0x73808a).fillRect(2350, 0, 850, WORLD_HEIGHT);
-    bg.fillStyle(0x4f6f42, 0.8);
-    for (let i = 0; i < 90; i++) {
-      const x = (i * 173) % WORLD_WIDTH;
-      const y = (i * 311) % WORLD_HEIGHT;
-      bg.fillCircle(x, y, 18 + (i % 3) * 7);
+    drawPixelTerrain(this, WORLD_WIDTH, WORLD_HEIGHT, 'world').setDepth(-20);
+
+    // Chunky pixel-road and river overlays.
+    const roads = this.add.graphics().setDepth(-10);
+    roads.lineStyle(22, 0xa98757, 1);
+    roads.beginPath();
+    roads.moveTo(380, 950); roads.lineTo(650, 820); roads.lineTo(1050, 760); roads.lineTo(1450, 900); roads.lineTo(2100, 1180); roads.lineTo(2700, 1700); roads.strokePath();
+    roads.lineStyle(10, 0xc0a36e, 1);
+    roads.beginPath();
+    roads.moveTo(380, 950); roads.lineTo(650, 820); roads.lineTo(1050, 760); roads.lineTo(1450, 900); roads.lineTo(2100, 1180); roads.lineTo(2700, 1700); roads.strokePath();
+
+    const river = this.add.graphics().setDepth(-9);
+    river.lineStyle(18, 0x3f6f91, 1);
+    river.beginPath(); river.moveTo(1100, 0); river.lineTo(980, 500); river.lineTo(1170, 900); river.lineTo(1030, 1500); river.lineTo(1220, 2200); river.strokePath();
+
+    for (let i = 0; i < 34; i++) {
+      const x = 180 + (i * 173) % (WORLD_WIDTH - 300);
+      const y = 140 + (i * 277) % (WORLD_HEIGHT - 260);
+      if (i % 3 === 0) drawPixelRock(this, x, y, 3).setDepth(-5);
+      else drawPixelTree(this, x, y, 3).setDepth(-5);
     }
-    bg.lineStyle(20, 0xb49a67, 0.8);
-    bg.beginPath();
-    bg.moveTo(380, 950); bg.lineTo(650, 820); bg.lineTo(1050, 760); bg.lineTo(1450, 900); bg.lineTo(2100, 1180); bg.lineTo(2700, 1700); bg.strokePath();
-    bg.lineStyle(5, 0x4d718c, 0.9);
-    bg.beginPath(); bg.moveTo(1100, 0); bg.lineTo(980, 500); bg.lineTo(1170, 900); bg.lineTo(1030, 1500); bg.lineTo(1220, 2200); bg.strokePath();
 
     for (const loc of LOCATIONS) this.createLocation(loc);
     const state = getState();
@@ -80,24 +96,19 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createParty(x: number, y: number): Phaser.GameObjects.Container {
-    const shadow = this.add.ellipse(0, 16, 54, 24, 0x182012, 0.35);
-    const a = this.add.circle(-13, 0, 12, 0x315f9b).setStrokeStyle(3, 0xf4e6b5);
-    const b = this.add.circle(12, 4, 11, 0xa64c45).setStrokeStyle(3, 0xf4e6b5);
-    const c = this.add.circle(0, -15, 11, 0x4b8b5c).setStrokeStyle(3, 0xf4e6b5);
-    const banner = this.add.triangle(0, -42, 0, 0, 24, 8, 0, 16, 0xd0a84c).setOrigin(0.5);
-    return this.add.container(x, y, [shadow, a, b, c, banner]).setDepth(30);
+    return createPixelParty(this, x, y).setDepth(30);
   }
 
   private createLocation(loc: typeof LOCATIONS[number]): void {
     const town = loc.type === 'town';
-    const hostile = loc.type === 'hostile';
-    const color = town ? 0xc9b07a : hostile ? 0x7c3434 : 0xc5c0a5;
-    const marker = this.add.container(loc.x, loc.y);
-    const ring = this.add.circle(0, 0, town ? 34 : 25, color, 0.95).setStrokeStyle(3, 0x2b241a);
-    const icon = this.add.text(0, -2, town ? '⌂' : hostile ? '⚔' : '◆', { fontFamily: 'serif', fontSize: town ? '32px' : '24px', color: '#211b14' }).setOrigin(0.5);
-    const label = this.add.text(0, town ? 48 : 38, loc.name, { fontFamily: 'Georgia', fontSize: '17px', color: '#f4e8c3', backgroundColor: '#241e18cc', padding: { x: 6, y: 3 } }).setOrigin(0.5);
-    marker.add([ring, icon, label]).setDepth(10);
-    marker.setSize(90, 90).setInteractive({ useHandCursor: true }).on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, ev: Phaser.Types.Input.EventData) => {
+    const art = createPixelLocation(this, loc.type, loc.id, 0, 0);
+    art.setPosition(-24, -28);
+    const label = this.add.text(0, 32, loc.name, {
+      fontFamily: 'monospace', fontSize: '15px', color: '#fff0c4',
+      backgroundColor: '#1d1914dd', padding: { x: 6, y: 3 }
+    }).setOrigin(0.5);
+    const marker = this.add.container(loc.x, loc.y, [art, label]).setDepth(10);
+    marker.setSize(92, 82).setInteractive({ useHandCursor: true }).on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, ev: Phaser.Types.Input.EventData) => {
       ev.stopPropagation();
       const state = getState();
       const dist = Phaser.Math.Distance.Between(state.worldX, state.worldY, loc.x, loc.y);
@@ -108,11 +119,9 @@ export class GameScene extends Phaser.Scene {
 
   private createEnemies(): void {
     for (const e of getState().enemies.filter(e => e.alive)) {
-      const color = e.kind === 'wolf' ? 0x737373 : e.kind === 'raider' ? 0x8a3f2e : 0x6f2530;
-      const body = this.add.circle(0, 0, 18 + e.strength * 2, color).setStrokeStyle(3, 0x241412);
-      const icon = this.add.text(0, 0, e.kind === 'wolf' ? '🐺' : '⚔', { fontSize: e.kind === 'wolf' ? '22px' : '18px' }).setOrigin(0.5);
-      const c = this.add.container(e.x, e.y, [body, icon]).setDepth(20);
-      this.enemySprites.set(e.id, c);
+      const sprite = createPixelEnemy(this, e.kind, e.x, e.y, e.strength).setDepth(20);
+      sprite.setPosition(e.x - 18, e.y - 22);
+      this.enemySprites.set(e.id, sprite);
     }
   }
 
@@ -228,11 +237,11 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setScroll(0, 0);
     const w = this.scale.width, h = this.scale.height;
     this.cameras.main.setBounds(0, 0, w, h);
-    const bg = this.add.graphics();
-    bg.fillStyle(0x444b35).fillRect(0, 0, w, h);
-    bg.fillStyle(0x39412f);
-    for (let i = 0; i < 14; i++) bg.fillCircle(90 + (i * 173) % (w - 150), 90 + (i * 97) % (h - 160), 20 + (i % 3) * 8);
-    bg.fillStyle(0x76634b); bg.fillRect(w * 0.47, 100, 45, 130); bg.fillRect(w * 0.42, h - 230, 120, 35);
+    drawPixelTerrain(this, w, h, 'battle').setDepth(-20);
+    drawPixelTree(this, w * 0.47, 100, 4).setDepth(-3);
+    drawPixelTree(this, w * 0.78, h * 0.58, 4).setDepth(-3);
+    drawPixelRock(this, w * 0.42, h - 230, 5).setDepth(-3);
+    drawPixelRock(this, w * 0.64, 180, 4).setDepth(-3);
 
     this.battleUnits = getState().mercenaries.slice(0, 6).map((m, i) => mercToBattleUnit(m, 180 + (i % 2) * 85, 220 + Math.floor(i / 2) * 105));
     this.battleUnits.push(...enemyBattleUnits(enemy.kind, enemy.strength));
@@ -252,14 +261,38 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createBattleUnitSprite(unit: BattleUnit): void {
-    const color = unit.side === 'player' ? 0x3b78a8 : 0x913c3c;
-    const circle = this.add.circle(0, 0, 25, color).setStrokeStyle(4, 0xead9a6);
-    const label = this.add.text(0, -38, unit.name, { fontFamily: 'Georgia', fontSize: '14px', color: '#fff4d0', backgroundColor: '#1a1612bb', padding: { x: 3, y: 2 } }).setOrigin(0.5);
-    const hpBg = this.add.rectangle(0, 34, 56, 8, 0x261b1b);
-    const hp = this.add.rectangle(-28, 34, 56, 8, 0x9e3d37).setOrigin(0, 0.5).setName('hp');
-    const armor = this.add.rectangle(-28, 45, 56, 5, 0x557fa5).setOrigin(0, 0.5).setName('armor');
-    const c = this.add.container(unit.x, unit.y, [circle, label, hpBg, hp, armor]).setDepth(20).setSize(70, 90).setInteractive({ useHandCursor: true });
-    c.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, ev: Phaser.Types.Input.EventData) => { ev.stopPropagation(); this.onUnitClicked(unit.id); });
+    let visual: Phaser.GameObjects.Container;
+    if (unit.side === 'player') {
+      const merc = getState().mercenaries.find(m => m.id === unit.mercenaryId);
+      const cls: MercClass = merc?.class ?? 'Swordsman';
+      visual = createPixelHumanoid(this, cls, -18, -22, { scale: 4 });
+    } else if (this.encounterEnemy?.kind === 'wolf') {
+      visual = createPixelWolf(this, -20, -18, 4);
+    } else {
+      const cls: MercClass = this.encounterEnemy?.kind === 'raider' ? 'Warrior' : 'Rogue';
+      visual = createPixelHumanoid(this, cls, -18, -22, { enemy: true, scale: 4 });
+    }
+
+    const label = this.add.text(0, -46, unit.name, {
+      fontFamily: 'monospace', fontSize: '13px', color: '#fff4d0',
+      backgroundColor: '#15120fdd', padding: { x: 4, y: 2 }
+    }).setOrigin(0.5);
+    const hpBg = this.add.rectangle(0, 39, 58, 8, 0x24191a);
+    const hp = this.add.rectangle(-29, 39, 58, 8, 0xb4473f).setOrigin(0, 0.5).setName('hp');
+    const armor = this.add.rectangle(-29, 50, 58, 5, 0x5b88ad).setOrigin(0, 0.5).setName('armor');
+    const selection = this.add.rectangle(0, 4, 50, 58)
+      .setStrokeStyle(2, unit.side === 'player' ? 0x86c8ff : 0xdc7169, 0.8)
+      .setFillStyle(0x000000, 0)
+      .setName('selection');
+
+    const c = this.add.container(unit.x, unit.y, [selection, visual, label, hpBg, hp, armor])
+      .setDepth(20)
+      .setSize(72, 100)
+      .setInteractive({ useHandCursor: true });
+    c.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, ev: Phaser.Types.Input.EventData) => {
+      ev.stopPropagation();
+      this.onUnitClicked(unit.id);
+    });
     this.battleSprites.set(unit.id, c);
   }
 
