@@ -4,6 +4,9 @@ const professionThresholds = [0, 30, 90, 220, 500];
 
 export function ensureCoreSystems(state: GameState): GameState {
   state.fatigue ??= 0;
+  state.explorationMode ??= 'Adaptive';
+  state.permadeath ??= false;
+  state.influence ??= 30;
   state.maxFatigue ??= 100;
   state.valor ??= 2;
   state.maxValor ??= 4;
@@ -59,9 +62,9 @@ export function unlockKnowledge(state: GameState, key: string, cost = 1): boolea
   return true;
 }
 
-export function travelStep(state: GameState, distance: number): void {
+export function travelStep(state: GameState, distance: number, onRoad = false): void {
   ensureCoreSystems(state);
-  state.fatigue = Math.min(state.maxFatigue, state.fatigue + distance * 0.015);
+  state.fatigue = Math.min(state.maxFatigue, state.fatigue + distance * (onRoad ? 0.008 : 0.015));
   if (state.suspicion > 0) {
     state.suspicion = Math.max(0, state.suspicion - distance * 0.004);
     state.wantedLevel = Math.min(5, Math.ceil(state.suspicion / 100));
@@ -191,13 +194,14 @@ export function buildCampFacility(state: GameState, facility: CampFacility): boo
   ensureCoreSystems(state);
   if (state.campFacilities.includes(facility)) return false;
   const costs: Record<CampFacility, number> = {
-    Campfire: 0, Tent: 0, Workshop: 0, 'Cooking Pot': 45, Lectern: 60, 'Strategy Table': 75
+    Campfire: 0, Tent: 0, Workshop: 0, 'Cooking Pot': 45, Lectern: 60, 'Strategy Table': 75, 'Training Dummy': 70, Stocks: 65
   };
   const cost = costs[facility];
   if (state.crowns < cost) return false;
   state.crowns -= cost;
   state.campFacilities.push(facility);
   if (facility === 'Strategy Table') state.maxValor += 1;
+  if (facility === 'Tent') state.maxValor = Math.max(state.maxValor, 4);
   return true;
 }
 
@@ -326,7 +330,9 @@ export function healInjury(state: GameState, mercId: string): boolean {
 
 export function personalityFoodCost(state: GameState): number {
   ensureCoreSystems(state);
-  return state.mercenaries.reduce((n,m)=>n + 2 + (m.traits.includes('Glutton') ? 1 : 0),0) + state.animals.length * 4;
+  const base = state.mercenaries.reduce((n,m)=>n + 2 + (m.traits.includes('Glutton') ? 1 : 0),0) + state.animals.length * 4;
+  const cookingDiscount = state.campFacilities.includes('Cooking Pot') ? 2 : 0;
+  return Math.max(1, base - cookingDiscount);
 }
 
 export function wageTotal(state: GameState): number {
