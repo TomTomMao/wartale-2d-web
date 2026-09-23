@@ -289,15 +289,30 @@ export class GameScene extends Phaser.Scene {
     drawPixelRock(this, w * 0.64, 180, 4).setDepth(-3);
 
     const state = getState();
-    this.battleUnits = state.mercenaries.slice(0, 6).map((m, i) => mercToBattleUnit(m, 180 + (i % 2) * 85, 220 + Math.floor(i / 2) * 105));
-    this.battleUnits.push(...state.animals.slice(0, 2).map((a, i) => animalToBattleUnit(a, 120, 500 + i * 70)));
+    const compact = w < 700;
+    const playerX = compact ? Math.max(62, w * 0.2) : Math.max(150, w * 0.2);
+    const enemyX = compact ? Math.min(w - 62, w * 0.8) : Math.min(w - 150, w * 0.78);
+    const topY = compact ? 150 : 220;
+    const usableHeight = Math.max(260, h - (compact ? 280 : 260));
+    const playerGap = compact ? Math.max(72, usableHeight / 3.2) : 105;
+    this.battleUnits = state.mercenaries.slice(0, compact ? 4 : 6).map((m, i) =>
+      mercToBattleUnit(m, playerX + (compact ? 0 : (i % 2) * 80), topY + Math.floor(i / (compact ? 1 : 2)) * playerGap)
+    );
+    this.battleUnits.push(...state.animals.slice(0, compact ? 1 : 2).map((a, i) =>
+      animalToBattleUnit(a, playerX + (compact ? 28 : -55), Math.min(h - 150, topY + (i + 3) * 74))
+    ));
     const avgLevel = state.mercenaries.length ? state.mercenaries.reduce((n,m)=>n+m.level,0) / state.mercenaries.length : 1;
     const baseStrength = state.explorationMode === 'Adaptive'
       ? Math.max(1, Math.round(avgLevel * 0.75))
       : enemy.strength;
     const difficultyOffset = state.difficulty === 'Hard' ? 1 : state.difficulty === 'Easy' ? -1 : 0;
     const scaledStrength = Math.max(1, baseStrength + difficultyOffset);
-    this.battleUnits.push(...enemyBattleUnits(enemy.kind, scaledStrength));
+    const enemies = enemyBattleUnits(enemy.kind, scaledStrength);
+    enemies.forEach((u, i) => {
+      u.x = enemyX - (compact ? 0 : (i % 2) * 74);
+      u.y = topY + Math.floor(i / (compact ? 1 : 2)) * (compact ? Math.max(72, usableHeight / 3.2) : 95);
+    });
+    this.battleUnits.push(...enemies);
     this.round = 1;
     for (const unit of this.battleUnits) this.createBattleUnitSprite(unit);
     this.battleMessage = this.add.text(w / 2, 32, '', { fontFamily: 'Georgia', fontSize: '20px', color: '#f6e8bf', backgroundColor: '#1a1815cc', padding: { x: 12, y: 7 } }).setOrigin(0.5).setDepth(100);
