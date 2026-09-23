@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { LOCATIONS, WORLD_HEIGHT, WORLD_WIDTH } from './data';
 import { applyDamage, enemyBattleUnits, generateLoot, mercToBattleUnit, recordKill } from './domain';
 import { getState, saveGame } from './store';
-import { travelStep } from './systems';
+import { inflictInjury, travelStep } from './systems';
 import type { BattleUnit, MercClass, WorldEnemy } from './types';
 import {
   createPixelLocation,
@@ -334,7 +334,10 @@ export class GameScene extends Phaser.Scene {
     const selected = this.battleUnits.find(u => u.id === this.selectedUnitId && u.health > 0 && !u.acted);
     if (!selected) return;
     const dist = Phaser.Math.Distance.Between(selected.x, selected.y, unit.x, unit.y);
-    if (dist > 135) { this.showBattleMessage('Target is out of melee range. Move closer first.'); return; }
+    const merc = getState().mercenaries.find(m => m.id === selected.mercenaryId);
+    let attackRange = merc?.class === 'Ranger' ? 300 : merc?.class === 'Spearman' ? 175 : 135;
+    if (merc?.learnedSkills.includes('Long Reach')) attackRange += 45;
+    if (dist > attackRange) { this.showBattleMessage(`Target is outside attack range (${attackRange}).`); return; }
     const attacker = this.battleSprites.get(selected.id);
     const defender = this.battleSprites.get(unit.id);
     const attackerActor = attacker?.getByName('actor');
@@ -343,7 +346,17 @@ export class GameScene extends Phaser.Scene {
       attackerActor.setFlipX(unit.x < selected.x);
       playActor(attackerActor, 'attack');
     }
-    const dmg = Math.max(1, selected.power + Phaser.Math.Between(-2, 3));
+    const targetFacing = unit.facing ?? -1;
+    const backstab = (selected.x < unit.x && targetFacing === 1) || (selected.x > unit.x && targetFacing === -1);
+    let dmg = Math.max(1, selected.power + Phaser.Math.Between(-2, 3));
+    if (backstab) dmg = Math.ceil(dmg * 1.3);
+    if (merc?.learnedSkills.includes('Aimed Shot') && merc.class === 'Ranger') dmg += 3;
+    if (merc?.learnedSkills.includes('Heavy Strike') && merc.class === 'Warrior') unit.statuses = Array.from(new Set([...(unit.statuses ?? []), 'Bleeding']));
+    if (merc?.learnedSkills.includes('Poison Blade') && merc.class === 'Rogue') unit.statuses = Array.from(new Set([...(unit.statuses ?? []), 'Poison']));
+    if (attackRange <= 175) {
+      selected.engagedWithId = unit.id;
+      unit.engagedWithId = selected.id;
+    }
     this.time.delayedCall(180, () => {
       applyDamage(unit, dmg);
       if (defenderActor instanceof Phaser.GameObjects.Sprite) {
@@ -352,7 +365,7 @@ export class GameScene extends Phaser.Scene {
         this.time.delayedCall(90, () => defenderActor.clearTint());
       }
       selected.acted = true;
-      this.showBattleMessage(`${selected.name} hits ${unit.name} for ${dmg}.`);
+      this.showBattleMessage(`${selected.name} hits ${unit.name} for ${dmg}${backstab ? ' (BACKSTAB)' : ''}${unit.statuses?.length ? ` · ${unit.statuses.join(', ')}` : ''}.`);
       this.updateBattleSprite(unit);
       this.afterPlayerAction();
     });
@@ -365,12 +378,28 @@ export class GameScene extends Phaser.Scene {
     if (d > selected.movement) { this.showBattleMessage('Destination is outside movement range.'); return; }
     const nx = Phaser.Math.Clamp(p.worldX, 60, this.scale.width - 60);
     const ny = Phaser.Math.Clamp(p.worldY, 90, this.scale.height - 90);
+    if (selected.engagedWithId) {
+      const opponent = this.battleUnits.find(u => u.id === selected.engagedWithId && u.health > 0);
+      if (opponent) {
+        applyDamage(selected, Math.max(1, Math.floor(opponent.power * 0.4)));
+        opponent.engagedWithId = undefined;
+        selected.engagedWithId = undefined;
+        this.updateBattleSprite(selected);
+        this.showBattleMessage(`${selected.name} disengages and suffers an opportunity attack.`);
+        if (selected.health <= 0) {
+          this.removeDeadUnits();
+          this.checkBattleEnd();
+          return;
+        }
+      }
+    }
     const container = this.battleSprites.get(selected.id);
     const actor = container?.getByName('actor');
     if (actor instanceof Phaser.GameObjects.Sprite) {
       actor.setFlipX(nx < selected.x);
       setWalk(actor, true);
     }
+    selected.facing = nx < selected.x ? -1 : 1;
     selected.x = nx; selected.y = ny; selected.moved = true;
     this.movementRange?.destroy();
     this.movementRange = undefined;
@@ -453,6 +482,7 @@ export class GameScene extends Phaser.Scene {
       if (dist > 120) {
         const ang = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y);
         const step = Math.min(enemy.movement, Math.max(0, dist - 95));
+        enemy.facing = target.x < enemy.x ? -1 : 1;
         enemy.x += Math.cos(ang) * step; enemy.y += Math.sin(ang) * step;
         const ec = this.battleSprites.get(enemy.id);
         const ea = ec?.getByName('actor');
@@ -473,10 +503,24 @@ export class GameScene extends Phaser.Scene {
           ea.setFlipX(target.x < enemy.x);
           playActor(ea, 'attack');
         }
-        const dmg = Math.max(1, enemy.power + Phaser.Math.Between(-2, 2));
+        const backstab = (enemy.x < target.x && (target.facing ?? 1) === 1) || (enemy.x > target.x && (target.facing ?? 1) === -1);
+        let dmg = Math.max(1, enemy.power + Phaser.Math.Between(-2, 2));
+        if (backstab) dmg = Math.ceil(dmg * 1.3);
         applyDamage(target, dmg);
+        enemy.engagedWithId = target.id;
+        target.engagedWithId = enemy.id;
         if (ta instanceof Phaser.GameObjects.Sprite) playActor(ta, target.health <= 0 ? 'death' : 'hurt', target.health > 0);
         this.updateBattleSprite(target);
+      }
+    }
+    // Damage-over-time resolves between rounds.
+    for (const u of this.battleUnits.filter(u => u.health > 0)) {
+      let dot = 0;
+      if (u.statuses?.includes('Poison')) dot += 2;
+      if (u.statuses?.includes('Bleeding')) dot += 3;
+      if (dot) {
+        u.health = Math.max(0, u.health - dot);
+        this.updateBattleSprite(u);
       }
     }
     this.removeDeadUnits();
@@ -519,6 +563,7 @@ export class GameScene extends Phaser.Scene {
     if (!playersAlive) {
       const state = getState();
       for (const m of state.mercenaries) { m.health = Math.max(1, Math.floor(m.maxHealth * 0.45)); m.armor = 0; }
+      if (state.mercenaries[0]) inflictInjury(state, state.mercenaries[0].id);
       state.crowns = Math.max(0, state.crowns - 30);
       saveGame();
       this.emit({ type: 'defeat' });
