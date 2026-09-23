@@ -59,7 +59,7 @@ test('grid battle exposes blocking cells and moves only to reachable tiles', asy
   const row = Math.floor((player.y - grid.originY) / grid.cellSize);
 
   const candidates = [
-    {col: col + 1, row}, {col, row: row + 1}, {col, row: row - 1}
+    {col: col + 1, row}, {col: col - 1, row}, {col, row: row + 1}, {col, row: row - 1}
   ].filter(c => c.col >= 0 && c.row >= 0 && c.col < grid.cols && c.row < grid.rows &&
     !selected.obstacles.includes(`${c.col},${c.row}`) &&
     !selected.units.some((u:any) => Math.floor((u.x-grid.originX)/grid.cellSize)===c.col && Math.floor((u.y-grid.originY)/grid.cellSize)===c.row));
