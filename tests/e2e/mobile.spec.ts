@@ -1,8 +1,11 @@
-import { test, expect, devices } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
 test.use({
-  ...devices['iPhone 13'],
-  viewport: { width: 390, height: 844 }
+  viewport: { width: 390, height: 844 },
+  isMobile: true,
+  hasTouch: true,
+  deviceScaleFactor: 3,
+  userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/537.36 Chrome/153 Mobile Safari/537.36'
 });
 
 test.beforeEach(async ({ page }) => {
@@ -54,6 +57,7 @@ test('mobile can enter a battle and sees touch-sized battle actions', async ({ p
   await page.getByRole('button', { name: 'New Company' }).tap();
   await page.getByRole('button', { name: 'Begin Journey' }).tap();
 
+  await page.waitForFunction(() => Boolean((window as any).__GAME_TEST_API__));
   await page.evaluate(() => (window as any).__GAME_TEST_API__.triggerEncounter('bandit-1'));
   await expect(page.getByTestId('encounter-panel')).toBeVisible();
   await page.getByRole('button', { name: 'Fight' }).tap();
