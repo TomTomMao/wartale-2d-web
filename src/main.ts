@@ -4,10 +4,10 @@ import { GameScene } from './game';
 import { acceptQuest, buyFood, equipItem, recruit, repairAll, rest, sellItem, totalAttack, turnInQuest } from './domain';
 import { getState, hasSave, loadGame, resetSave, saveGame, startNewGame } from './store';
 import {
-  assignProfession, buildCampFacility, buyPony, buyTradeGood, capturePrisoner,
-  carryingCapacity, changeRelationship, commitCrime, ensureCoreSystems, exploreTomb,
-  inventoryWeight, layLow, sellTradeGood, tradePrice, turnInPrisoner, unlockKnowledge,
-  workProfession
+  assignProfession, availableSkills, availableSpecializations, buildCampFacility, buyPony, buyTradeGood, capturePrisoner,
+  carryingCapacity, changeRelationship, commitCrime, craftRecipe, ensureCoreSystems, exploreTomb,
+  healInjury, inventoryWeight, layLow, learnSkill, sellTradeGood, specializeMercenary, tradePrice,
+  turnInPrisoner, unlockKnowledge, workProfession
 } from './systems';
 import type { CampFacility, GameState, MercClass, Profession } from './types';
 
@@ -141,6 +141,12 @@ function showInventory(): void {
         ${professions.map(p=>`<button class="mini" data-action="assign-profession" data-merc="${m.id}" data-profession="${p}">${p}</button>`).join('')}
         ${m.profession ? `<button class="mini" data-action="work-profession" data-merc="${m.id}">Work</button>` : ''}
       </div>
+      <span>Specialization: ${m.specialization ?? (m.level >= 3 ? 'Choose one' : 'Unlocks at Lv 3')}</span>
+      <div>${!m.specialization && m.level>=3 ? availableSpecializations(m.class).map(sp=>`<button class="mini" data-action="specialize" data-merc="${m.id}" data-specialization="${sp}">${sp}</button>`).join('') : ''}</div>
+      <span>Skills: ${m.learnedSkills.join(', ') || 'None'} · Skill Points: ${m.skillPoints}</span>
+      <div>${m.skillPoints>0 ? availableSkills(m.class).filter(sk=>!m.learnedSkills.includes(sk)).map(sk=>`<button class="mini" data-action="learn-skill" data-merc="${m.id}" data-skill="${sk}">${sk}</button>`).join('') : ''}</div>
+      <span>Traits: ${m.traits.join(', ') || 'None'} ${m.injury ? `· Injury: ${m.injury}` : ''}</span>
+      ${m.injury ? `<button class="mini" data-action="heal-injury" data-merc="${m.id}">Use Medicine</button>` : ''}
       <span>Relations: ${relation || 'No bonds yet'}</span>
     </div>`;
   }).join('');
@@ -170,7 +176,10 @@ function showCamp(): void {
     <div class="camp-art"><div class="fire">🔥</div>${s.mercenaries.slice(0,6).map((m,i)=>`<div class="camper c${i}">◆<span>${m.name}</span></div>`).join('')}</div>
     <p>Fatigue <strong>${Math.round(s.fatigue)}/${s.maxFatigue}</strong> · Valor <strong>${s.valor}/${s.maxValor}</strong>. Rest costs <strong>${s.mercenaries.length * 2} food</strong>; wages <strong>${wages}</strong> every third rest.</p>
     <p>Facilities: ${s.campFacilities.join(', ')}</p>
+    <p>Materials: Iron ${s.materials.iron ?? 0} · Leather ${s.materials.leather ?? 0} · Wood ${s.materials.wood ?? 0} · Herbs ${s.materials.herbs ?? 0} · Cloth ${s.materials.cloth ?? 0} · Torches ${s.torches}</p>
     <div class="row">${button('Rest until morning', 'rest', 'primary')}${build}${s.mercenaries.length>1?button('Share a meal / Socialise','socialise'):''}${s.wantedLevel?button('Lay Low','lay-low'):''}</div>
+    <h3>Crafting</h3>
+    <div class="row">${['Repair Kit','Medicine','Torch','Armor Reinforcement'].map(r=>button(`Craft ${r}`,'craft','',`data-recipe="${r}"`)).join('')}</div>
   </div>`;
 }
 
@@ -295,6 +304,10 @@ document.addEventListener('click', (e) => {
     assignProfession(s,target.dataset.merc!,target.dataset.profession as Profession); saveGame(); showInventory();
   }
   else if (action === 'work-profession') { showToast(workProfession(s,target.dataset.merc!)); saveGame(); showInventory(); renderWorldHud(); }
+  else if (action === 'specialize') { showToast(specializeMercenary(s,target.dataset.merc!,target.dataset.specialization!) ? 'Specialization chosen.' : 'Cannot specialize yet.'); saveGame(); showInventory(); }
+  else if (action === 'learn-skill') { showToast(learnSkill(s,target.dataset.merc!,target.dataset.skill!) ? 'Skill learned.' : 'Cannot learn this skill.'); saveGame(); showInventory(); }
+  else if (action === 'heal-injury') { showToast(healInjury(s,target.dataset.merc!) ? 'Injury treated.' : 'Medicine required.'); saveGame(); showInventory(); }
+  else if (action === 'craft') { showToast(craftRecipe(s,target.dataset.recipe!) ? `${target.dataset.recipe} crafted.` : 'Missing materials.'); saveGame(); showCamp(); renderWorldHud(); }
   else if (action === 'unlock-knowledge') {
     showToast(unlockKnowledge(s,target.dataset.key!) ? 'Knowledge unlocked.' : 'Not enough Knowledge Points.');
     saveGame(); showKnowledge();
