@@ -1,4 +1,5 @@
 import { BASE_QUEST, CLASS_STATS, ITEMS, startingEnemies } from './data';
+import { ensureCoreSystems } from './systems';
 import type { BattleUnit, GameState, Item, MercClass, Mercenary, Quest } from './types';
 
 let idCounter = 1;
@@ -12,7 +13,7 @@ export function createMercenary(name: string, cls: MercClass): Mercenary {
     id: uid('merc'), name, class: cls, level: 1, xp: 0,
     health: s.hp, maxHealth: s.hp, armor: s.armor, maxArmor: s.armor,
     strength: s.str, dexterity: s.dex, movement: s.move, crit: s.crit,
-    wage: s.wage, traits: [], equipment: {}
+    wage: s.wage, traits: [], equipment: {}, relations: {}
   };
 }
 
@@ -23,13 +24,17 @@ export function createInitialState(companyName = 'Iron Wolves', leaderClass: Mer
   leader.equipment.weapon = cloneItem(ITEMS.rustySword);
   second.equipment.weapon = cloneItem(ITEMS.hunterBow);
   third.equipment.armor = cloneItem(ITEMS.leatherArmor);
-  return {
+  return ensureCoreSystems({
     companyName, crowns: 120, food: 12, morale: 50, day: 1, rests: 0,
     worldX: 520, worldY: 900, mercenaries: [leader, second, third],
     inventory: [cloneItem(ITEMS.bread), cloneItem(ITEMS.meat)],
     quests: [structuredClone(BASE_QUEST)], discovered: ['stonebridge'],
-    enemies: startingEnemies(), currentRegion: 'Greenmarch', difficulty
-  };
+    enemies: startingEnemies(), currentRegion: 'Greenmarch', difficulty,
+    fatigue: 0, maxFatigue: 100, valor: 2, maxValor: 4,
+    suspicion: 0, wantedLevel: 0, knowledge: 0, knowledgePoints: 0,
+    unlockedKnowledge: [], prisoners: [], ponies: [], campFacilities: [],
+    torches: 6, tombs: [], tradeGoods: {}
+  });
 }
 
 export function totalAttack(merc: Mercenary): number {
@@ -105,6 +110,9 @@ export function rest(state: GameState): { ok: boolean; wagesPaid: number } {
   if (state.food < neededFood) return { ok: false, wagesPaid: 0 };
   state.food -= neededFood;
   state.day += 1;
+  ensureCoreSystems(state);
+  state.fatigue = 0;
+  state.valor = state.maxValor;
   state.rests += 1;
   for (const m of state.mercenaries) { m.health = m.maxHealth; m.armor = m.maxArmor; }
   let wagesPaid = 0;
@@ -180,6 +188,6 @@ export function deserializeState(raw: string): GameState | null {
   try {
     const value = JSON.parse(raw) as GameState;
     if (!value || !Array.isArray(value.mercenaries) || typeof value.crowns !== 'number') return null;
-    return value;
+    return ensureCoreSystems(value);
   } catch { return null; }
 }
