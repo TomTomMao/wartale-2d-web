@@ -292,9 +292,11 @@ export class GameScene extends Phaser.Scene {
     this.battleUnits = state.mercenaries.slice(0, 6).map((m, i) => mercToBattleUnit(m, 180 + (i % 2) * 85, 220 + Math.floor(i / 2) * 105));
     this.battleUnits.push(...state.animals.slice(0, 2).map((a, i) => animalToBattleUnit(a, 120, 500 + i * 70)));
     const avgLevel = state.mercenaries.length ? state.mercenaries.reduce((n,m)=>n+m.level,0) / state.mercenaries.length : 1;
-    const scaledStrength = state.explorationMode === 'Adaptive'
+    const baseStrength = state.explorationMode === 'Adaptive'
       ? Math.max(1, Math.round(avgLevel * 0.75))
       : enemy.strength;
+    const difficultyOffset = state.difficulty === 'Hard' ? 1 : state.difficulty === 'Easy' ? -1 : 0;
+    const scaledStrength = Math.max(1, baseStrength + difficultyOffset);
     this.battleUnits.push(...enemyBattleUnits(enemy.kind, scaledStrength));
     this.round = 1;
     for (const unit of this.battleUnits) this.createBattleUnitSprite(unit);
@@ -323,6 +325,11 @@ export class GameScene extends Phaser.Scene {
       kind = this.encounterEnemy?.kind === 'wolf' ? 'wolf' : this.encounterEnemy?.kind === 'raider' ? 'raider' : 'bandit';
     }
     const actor = createActor(this, kind, 0, 2, 1.35).setName('actor');
+    if (unit.mercenaryId) {
+      const merc = getState().mercenaries.find(m => m.id === unit.mercenaryId);
+      const tints = [0xffffff,0xffe0cf,0xd9f0ff,0xe9d4ff];
+      actor.setTint(tints[merc?.appearanceVariant ?? 0] ?? 0xffffff);
+    }
     const label = this.add.text(0, -45, unit.name, {
       fontFamily: 'monospace', fontSize: '13px', color: '#fff4d0',
       backgroundColor: '#15120fdd', padding: { x: 4, y: 2 }
@@ -379,7 +386,9 @@ export class GameScene extends Phaser.Scene {
     if (surrounders >= 1) dmg = Math.ceil(dmg * (1 + Math.min(0.3, surrounders * 0.1)));
     if (merc?.learnedSkills.includes('Aimed Shot') && merc.class === 'Ranger') dmg += 3;
     if (merc?.learnedSkills.includes('Heavy Strike') && merc.class === 'Warrior') unit.statuses = Array.from(new Set([...(unit.statuses ?? []), 'Bleeding']));
-    if (merc?.learnedSkills.includes('Poison Blade') && merc.class === 'Rogue') unit.statuses = Array.from(new Set([...(unit.statuses ?? []), 'Poison']));
+    if ((merc?.learnedSkills.includes('Poison Blade') && merc.class === 'Rogue') || merc?.weaponOil === 'Poison') {
+      unit.statuses = Array.from(new Set([...(unit.statuses ?? []), 'Poison']));
+    }
     if (attackRange <= 175) {
       selected.engagedWithId = unit.id;
       unit.engagedWithId = selected.id;
