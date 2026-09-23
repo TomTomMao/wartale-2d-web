@@ -173,7 +173,7 @@ export function generateLoot(kind: 'bandit' | 'wolf' | 'raider'): { crowns: numb
 }
 
 export function mercToBattleUnit(m: Mercenary, x: number, y: number): BattleUnit {
-  return { id: uid('bu'), name: m.name, side: 'player', x, y, health: m.health, maxHealth: m.maxHealth, armor: m.armor, maxArmor: m.maxArmor, power: totalAttack(m), movement: m.movement, crit: m.crit, acted: false, moved: false, mercenaryId: m.id };
+  return { id: uid('bu'), name: m.name, side: 'player', x, y, health: m.health, maxHealth: m.maxHealth, armor: m.armor, maxArmor: m.maxArmor, power: totalAttack(m), movement: m.movement, crit: m.crit, acted: false, moved: false, mercenaryId: m.id, facing: 1, statuses: [] };
 }
 
 export function enemyBattleUnits(kind: 'bandit' | 'wolf' | 'raider', strength = 1): BattleUnit[] {
@@ -183,7 +183,7 @@ export function enemyBattleUnits(kind: 'bandit' | 'wolf' | 'raider', strength = 
     side: 'enemy' as const, x: 650 + (i % 2) * 90, y: 250 + i * 85,
     health: 16 + strength * 6, maxHealth: 16 + strength * 6,
     armor: kind === 'wolf' ? 0 : 3 + strength * 2, maxArmor: kind === 'wolf' ? 0 : 3 + strength * 2,
-    power: 5 + strength * 2, movement: 145, crit: 0.06, acted: false, moved: false
+    power: 5 + strength * 2, movement: 145, crit: 0.06, acted: false, moved: false, facing: -1 as const, statuses: []
   }));
 }
 
