@@ -13,7 +13,9 @@ export function createMercenary(name: string, cls: MercClass): Mercenary {
     id: uid('merc'), name, class: cls, level: 1, xp: 0,
     health: s.hp, maxHealth: s.hp, armor: s.armor, maxArmor: s.armor,
     strength: s.str, dexterity: s.dex, movement: s.move, crit: s.crit,
-    wage: s.wage, traits: [], equipment: {}, relations: {}
+    wage: s.wage,
+    traits: cls === 'Warrior' ? ['Strong'] : cls === 'Ranger' ? ['Quick'] : cls === 'Rogue' ? ['Greedy'] : ['Tough'],
+    equipment: {}, learnedSkills: [], skillPoints: 0, relations: {}
   };
 }
 
@@ -38,7 +40,9 @@ export function createInitialState(companyName = 'Iron Wolves', leaderClass: Mer
 }
 
 export function totalAttack(merc: Mercenary): number {
-  return merc.strength + (merc.equipment.weapon?.power ?? 0) + Math.floor(merc.dexterity / 4);
+  const trait = merc.traits.includes('Strong') ? 2 : 0;
+  const injury = merc.injury ? -1 : 0;
+  return Math.max(1, merc.strength + trait + injury + (merc.equipment.weapon?.power ?? 0) + Math.floor(merc.dexterity / 4));
 }
 
 export function applyDamage(target: { health: number; armor: number }, damage: number): { armorDamage: number; healthDamage: number } {
@@ -158,6 +162,7 @@ export function gainXp(m: Mercenary, amount: number): void {
     const needed = 100 + (m.level - 1) * 80;
     if (m.xp < needed) break;
     m.xp -= needed; m.level += 1; m.maxHealth += 4; m.health = m.maxHealth; m.strength += 1;
+    if (m.level === 3 || m.level === 5 || m.level === 8) m.skillPoints += 1;
   }
 }
 
