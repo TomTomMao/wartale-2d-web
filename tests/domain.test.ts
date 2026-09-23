@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { acceptQuest, applyDamage, buyFood, createInitialState, equipItem, recruit, rest, sellItem, serializeState, deserializeState, turnInQuest } from '../src/domain';
 import { ITEMS } from '../src/data';
 import {
-  assignProfession, availableSkills, availableSpecializations, buildCampFacility, buyPony, buyTradeGood, captureAnimal, capturePrisoner,
+  applyOrigin, applyPoisonOil, assignProfession, availableSkills, availableSpecializations, buildCampFacility, buyPony, buyTradeGood, captureAnimal, capturePrisoner,
   carryingCapacity, changeRelationship, commitCrime, craftRecipe, ensureCoreSystems, exploreTomb,
   healInjury, inflictInjury, learnSkill, sellTradeGood, specializeMercenary, turnInPrisoner, unlockKnowledge, workProfession
 } from '../src/systems';
@@ -214,5 +214,40 @@ describe('specializations crafting injuries paths and animals', () => {
     const before = s.paths['Trade and Craftsmanship'].xp;
     workProfession(s,m.id);
     expect(s.paths['Trade and Craftsmanship'].xp).toBeGreaterThan(before);
+  });
+});
+
+
+describe('origin, influence, weapon compatibility and oils', () => {
+  it('applies an original starting background', () => {
+    const s = createInitialState();
+    const before = s.crowns;
+    applyOrigin(s, 'Road Traders');
+    expect(s.origin).toBe('Road Traders');
+    expect(s.crowns).toBeGreaterThan(before);
+    expect(s.tradeGoods.wool).toBeGreaterThan(0);
+  });
+
+  it('recruitment consumes influence', () => {
+    const s = createInitialState();
+    s.crowns = 500;
+    const before = s.influence;
+    expect(recruit(s)).toBe(true);
+    expect(s.influence).toBeLessThan(before);
+  });
+
+  it('rejects a bow on a swordsman', () => {
+    const s = createInitialState();
+    const m = s.mercenaries.find(m => m.class === 'Swordsman') ?? s.mercenaries[0];
+    s.inventory.push(structuredClone(ITEMS.hunterBow));
+    expect(equipItem(s, m.id, 'hunter-bow')).toBe(false);
+  });
+
+  it('applies crafted poison oil to an equipped weapon', () => {
+    const s = createInitialState();
+    const m = s.mercenaries[0];
+    s.inventory.push({id:'poison-oil-test',name:'Poison Oil',rarity:'Uncommon',value:1});
+    expect(applyPoisonOil(s,m.id)).toBe(true);
+    expect(m.weaponOil).toBe('Poison');
   });
 });
