@@ -36,8 +36,8 @@ function bootGame(): void {
   game = new Phaser.Game({
     type: Phaser.AUTO,
     parent: 'game-root',
-    width: Math.max(960, window.innerWidth),
-    height: Math.max(640, window.innerHeight),
+    width: window.innerWidth,
+    height: window.innerHeight,
     backgroundColor: '#29251d',
     scene: [GameScene],
     physics: { default: 'arcade' },
@@ -65,16 +65,27 @@ function renderWorldHud(): void {
   const weight = inventoryWeight(s);
   const cap = carryingCapacity(s);
   hud.innerHTML = `
-    <div class="topbar" data-testid="world-hud">
-      <div><strong>${s.companyName}</strong><span>Day ${s.day}</span><span>${s.currentRegion}</span><span>⚡ Fatigue ${Math.round(s.fatigue)}/${s.maxFatigue}</span></div>
-      <div><span>👑 ${s.crowns}</span><span>✦ Influence ${s.influence}</span><span>🍞 ${s.food}</span><span>⚔ Valor ${s.valor}/${s.maxValor}</span><span>⚖ Wanted ${s.wantedLevel}</span><span>🎒 ${weight.toFixed(1)}/${cap}</span></div>
+    <div class="topbar world-topbar" data-testid="world-hud">
+      <div class="hud-brand">
+        <div class="company-mark">⚔</div>
+        <div class="hud-title"><strong>${s.companyName}</strong><span>Day ${s.day} · ${s.currentRegion}</span></div>
+      </div>
+      <div class="resource-strip">
+        <span class="resource-chip"><b>👑</b><em>${s.crowns}</em></span>
+        <span class="resource-chip desktop-resource"><b>✦</b><em>${s.influence}</em></span>
+        <span class="resource-chip"><b>🍞</b><em>${s.food}</em></span>
+        <span class="resource-chip"><b>⚡</b><em>${Math.round(s.fatigue)}</em></span>
+        <span class="resource-chip desktop-resource"><b>⚔</b><em>${s.valor}/${s.maxValor}</em></span>
+        <span class="resource-chip wanted-chip"><b>⚖</b><em>${s.wantedLevel}</em></span>
+        <span class="resource-chip desktop-resource"><b>🎒</b><em>${weight.toFixed(1)}/${cap}</em></span>
+      </div>
     </div>
-    <div class="quickbar">
-      ${button('Company [I]', 'inventory')}
-      ${button('Contracts [Q]', 'quests')}
-      ${button('Knowledge', 'knowledge')}
-      ${button('Camp [R]', 'camp')}
-      ${button('Save', 'save')}
+    <div class="quickbar mobile-nav" data-testid="mobile-nav">
+      ${button('<span class="nav-icon">🛡</span><span class="nav-label">Company</span>', 'inventory', 'nav-btn')}
+      ${button('<span class="nav-icon">📜</span><span class="nav-label">Contracts</span>', 'quests', 'nav-btn')}
+      ${button('<span class="nav-icon">✦</span><span class="nav-label">Knowledge</span>', 'knowledge', 'nav-btn')}
+      ${button('<span class="nav-icon">🔥</span><span class="nav-label">Camp</span>', 'camp', 'nav-btn')}
+      ${button('<span class="nav-icon">💾</span><span class="nav-label">Save</span>', 'save', 'nav-btn')}
     </div>
   `;
 }
@@ -83,13 +94,13 @@ function renderBattleHud(detail: any): void {
   const selected = detail.selected;
   hud.innerHTML = `
     <div class="topbar battlebar" data-testid="battle-hud">
-      <div><strong>Round ${detail.round}</strong><span>Enemies: ${detail.enemies}</span><span>Valor: ${detail.valor ?? getState().valor}/${getState().maxValor}</span></div>
-      <div>${selected ? `<strong>${selected.name}</strong><span>HP ${selected.health}</span><span>Armor ${selected.armor}</span>` : '<span>Select a mercenary</span>'}</div>
+      <div class="hud-brand"><div class="company-mark battle-mark">⚔</div><div class="hud-title"><strong>Round ${detail.round}</strong><span>${detail.enemies} enemies · Valor ${detail.valor ?? getState().valor}/${getState().maxValor}</span></div></div>
+      <div class="selected-unit-card">${selected ? `<strong>${selected.name}</strong><span>❤ ${selected.health} &nbsp; ◆ ${selected.armor}</span>` : '<strong>Select a mercenary</strong><span>Tap a blue unit to begin</span>'}</div>
     </div>
     <div class="battle-actions">
-      ${button('Rally [1 Valor]', 'valor-skill', !selected ? 'disabled-look' : '')}
-      ${button('Guard', 'guard', !selected ? 'disabled-look' : '')}
-      ${button('End Unit [Space]', 'end-unit', !selected ? 'disabled-look' : '')}
+      ${button('<span class="action-icon">✦</span><span>Rally</span><small>1 Valor</small>', 'valor-skill', !selected ? 'disabled-look action-btn' : 'action-btn')}
+      ${button('<span class="action-icon">🛡</span><span>Guard</span>', 'guard', !selected ? 'disabled-look action-btn' : 'action-btn')}
+      ${button('<span class="action-icon">✓</span><span>End Unit</span>', 'end-unit', !selected ? 'disabled-look action-btn' : 'action-btn')}
     </div>`;
 }
 
