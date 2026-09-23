@@ -95,6 +95,19 @@ export interface Pony {
   capacity: number;
 }
 
+export interface AnimalCompanion {
+  id: string;
+  name: string;
+  species: 'Wolf';
+  health: number;
+  maxHealth: number;
+  power: number;
+  movement: number;
+}
+
+export type PathName = 'Power and Glory' | 'Trade and Craftsmanship' | 'Crime and Chaos' | 'Mysteries and Wisdom';
+export interface PathProgress { xp: number; level: number; points: number; }
+
 export interface TombProgress {
   id: string;
   name: string;
@@ -137,6 +150,9 @@ export interface GameState {
   tombs: TombProgress[];
   tradeGoods: Record<string, number>;
   materials: Record<string, number>;
+  ropes: number;
+  animals: AnimalCompanion[];
+  paths: Record<PathName, PathProgress>;
 }
 
 export interface BattleUnit {
@@ -155,6 +171,7 @@ export interface BattleUnit {
   acted: boolean;
   moved: boolean;
   mercenaryId?: string;
+  animalId?: string;
   facing?: 1 | -1;
   engagedWithId?: string;
   statuses?: string[];
