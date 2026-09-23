@@ -7,9 +7,9 @@ import {
   applyOrigin, applyPoisonOil, assignProfession, availableSkills, availableSpecializations, buildCampFacility, buyPony, buyRope, buyTradeGood, captureAnimal, capturePrisoner,
   carryingCapacity, changeRelationship, commitCrime, craftRecipe, ensureCoreSystems, exploreTomb,
   cycleAppearance, healInjury, inventoryWeight, layLow, learnSkill, sellTradeGood, specializeMercenary, tradePrice,
-  turnInPrisoner, unlockKnowledge, workProfession
+  setValorStyle, turnInPrisoner, unlockKnowledge, workProfession
 } from './systems';
-import type { CampFacility, GameState, MercClass, Profession } from './types';
+import type { CampFacility, GameState, MercClass, Profession, ValorStyle } from './types';
 
 const hud = document.querySelector<HTMLDivElement>('#hud')!;
 const modal = document.querySelector<HTMLDivElement>('#modal-root')!;
@@ -94,7 +94,7 @@ function renderBattleHud(detail: any): void {
   const selected = detail.selected;
   hud.innerHTML = `
     <div class="topbar battlebar" data-testid="battle-hud">
-      <div class="hud-brand"><div class="company-mark battle-mark">⚔</div><div class="hud-title"><strong>Round ${detail.round}</strong><span>${detail.enemies} enemies · Valor ${detail.valor ?? getState().valor}/${getState().maxValor}</span></div></div>
+      <div class="hud-brand"><div class="company-mark battle-mark">⚔</div><div class="hud-title"><strong>Round ${detail.round}</strong><span>${detail.enemies} enemies · 🟠 ${detail.valor ?? getState().valor} permanent · 🟡 ${detail.tempValor ?? 0} temporary</span></div></div>
       <div class="selected-unit-card">${selected ? `<strong>${selected.name}</strong><span>❤ ${selected.health} &nbsp; ◆ ${selected.armor}</span>` : '<strong>Select a mercenary</strong><span>Tap a blue unit to begin</span>'}</div>
     </div>
     <div class="battle-actions expanded-actions">
@@ -167,6 +167,10 @@ function showInventory(): void {
       <div>${m.skillPoints>0 ? availableSkills(m.class).filter(sk=>!m.learnedSkills.includes(sk)).map(sk=>`<button class="mini" data-action="learn-skill" data-merc="${m.id}" data-skill="${sk}">${sk}</button>`).join('') : ''}</div>
       <span>Traits: ${m.traits.join(', ') || 'None'} ${m.injury ? `· Injury: ${m.injury}` : ''}</span>
       <span>Appearance Variant: ${m.appearanceVariant ?? 0} · Weapon Oil: ${m.weaponOil ?? 'None'}</span>
+      <span>Combat Valor: ${m.valorStyle} — generates 1 temporary VP when the condition is met.</span>
+      <div>
+        ${(['Engagement','Victory','Support'] as ValorStyle[]).map(v=>`<button class="mini ${m.valorStyle===v?'selected-skill':''}" data-action="valor-style" data-merc="${m.id}" data-valor-style="${v}">${v}</button>`).join('')}
+      </div>
       <div><button class="mini" data-action="cycle-appearance" data-merc="${m.id}">Change Look</button>
       ${s.inventory.some(i=>i.name==='Poison Oil') && m.equipment.weapon ? `<button class="mini" data-action="apply-oil" data-merc="${m.id}">Apply Poison Oil</button>` : ''}</div>
       ${m.injury ? `<button class="mini" data-action="heal-injury" data-merc="${m.id}">Use Medicine</button>` : ''}
@@ -260,6 +264,8 @@ function exposeTestApi(): void {
     battleSnapshot: () => scene?.testBattleSnapshot(),
     selectFirstPlayer: () => scene?.testSelectFirstPlayer(),
     moveSelectedTo: (col:number,row:number) => scene?.testMoveSelectedTo(col,row),
+    killFirstEnemy: () => scene?.testKillFirstEnemy(),
+    grantTempValor: (amount=1) => scene?.testGrantTempValor(amount),
     save: () => saveGame(),
     resetSave: () => { resetSave(); location.reload(); }
   };
@@ -349,6 +355,7 @@ document.addEventListener('click', (e) => {
     assignProfession(s,target.dataset.merc!,target.dataset.profession as Profession); saveGame(); showInventory();
   }
   else if (action === 'work-profession') { showToast(workProfession(s,target.dataset.merc!)); saveGame(); showInventory(); renderWorldHud(); }
+  else if (action === 'valor-style') { setValorStyle(s,target.dataset.merc!,target.dataset.valorStyle as ValorStyle); saveGame(); showInventory(); showToast('Combat Valor generation updated.'); }
   else if (action === 'specialize') { showToast(specializeMercenary(s,target.dataset.merc!,target.dataset.specialization!) ? 'Specialization chosen.' : 'Cannot specialize yet.'); saveGame(); showInventory(); }
   else if (action === 'learn-skill') { showToast(learnSkill(s,target.dataset.merc!,target.dataset.skill!) ? 'Skill learned.' : 'Cannot learn this skill.'); saveGame(); showInventory(); }
   else if (action === 'heal-injury') { showToast(healInjury(s,target.dataset.merc!) ? 'Injury treated.' : 'Medicine required.'); saveGame(); showInventory(); }
