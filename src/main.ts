@@ -97,8 +97,14 @@ function renderBattleHud(detail: any): void {
       <div class="hud-brand"><div class="company-mark battle-mark">⚔</div><div class="hud-title"><strong>Round ${detail.round}</strong><span>${detail.enemies} enemies · Valor ${detail.valor ?? getState().valor}/${getState().maxValor}</span></div></div>
       <div class="selected-unit-card">${selected ? `<strong>${selected.name}</strong><span>❤ ${selected.health} &nbsp; ◆ ${selected.armor}</span>` : '<strong>Select a mercenary</strong><span>Tap a blue unit to begin</span>'}</div>
     </div>
-    <div class="battle-actions">
+    <div class="battle-actions expanded-actions">
       ${button('<span class="action-icon">✦</span><span>Rally</span><small>1 Valor</small>', 'valor-skill', !selected ? 'disabled-look action-btn' : 'action-btn')}
+      ${(detail.skills ?? []).map((s:any)=>button(
+        `<span class="action-icon">${s.icon}</span><span>${s.name}</span><small>${s.cost ? s.cost+' Valor' : 'Free'}</small>`,
+        'battle-skill',
+        (!selected ? 'disabled-look action-btn' : 'action-btn') + (detail.selectedSkillId===s.id?' selected-skill':''),
+        `data-skill="${s.id}" title="${s.description}"`
+      )).join('')}
       ${button('<span class="action-icon">🛡</span><span>Guard</span>', 'guard', !selected ? 'disabled-look action-btn' : 'action-btn')}
       ${button('<span class="action-icon">✓</span><span>End Unit</span>', 'end-unit', !selected ? 'disabled-look action-btn' : 'action-btn')}
     </div>`;
@@ -307,6 +313,7 @@ document.addEventListener('click', (e) => {
   else if (action === 'close') closeModal();
   else if (action === 'save') { saveGame(); showToast('Game saved.'); }
   else if (action === 'valor-skill') scene?.valorSkillSelected();
+  else if (action === 'battle-skill') scene?.selectBattleSkill(target.dataset.skill!);
   else if (action === 'guard') scene?.guardSelectedUnit();
   else if (action === 'end-unit') scene?.endSelectedUnit();
   else if (action === 'flee') { closeModal(); scene?.fleeEncounter(); }
