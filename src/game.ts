@@ -11,6 +11,11 @@ import {
   drawPixelTree
 } from './pixelArt';
 import { classToKind, createActor, playActor, setWalk, type ActorKind } from './animatedSprites';
+import { battleSkillsFor, type BattleSkill } from './battleSkills';
+import {
+  cellKey, cellToWorld, createGridLayout, defaultObstacleCells, manhattan,
+  neighbours, reachableCells, shortestPath, worldToCell, type GridCell, type GridLayout
+} from './battleGrid';
 
 const WORLD_EVENT = 'ironbound:ui';
 type Mode = 'world' | 'battle';
@@ -28,6 +33,10 @@ export class GameScene extends Phaser.Scene {
   private round = 1;
   private battleMessage?: Phaser.GameObjects.Text;
   private movementRange?: Phaser.GameObjects.Arc;
+  private battleGrid?: GridLayout;
+  private gridHighlights: Phaser.GameObjects.Rectangle[] = [];
+  private battleObstacles = new Set<string>();
+  private selectedSkillId?: string;
   private discoveryCooldown = new Set<string>();
 
   constructor() { super('game'); }
@@ -46,6 +55,7 @@ export class GameScene extends Phaser.Scene {
     this.children.removeAll(true);
     this.enemySprites.clear();
     this.battleSprites.clear();
+    this.clearGridHighlights();
     this.movementRange?.destroy();
     this.movementRange = undefined;
     this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
@@ -277,30 +287,41 @@ export class GameScene extends Phaser.Scene {
     this.mode = 'battle';
     this.children.removeAll(true);
     this.enemySprites.clear();
+    this.battleSprites.clear();
+    this.clearGridHighlights();
+    this.selectedUnitId = undefined;
+    this.selectedSkillId = undefined;
     this.cameras.main.stopFollow();
     this.cameras.main.setZoom(1);
     this.cameras.main.setScroll(0, 0);
     const w = this.scale.width, h = this.scale.height;
     this.cameras.main.setBounds(0, 0, w, h);
     drawPixelTerrain(this, w, h, 'battle').setDepth(-20);
-    drawPixelTree(this, w * 0.47, 100, 4).setDepth(-3);
-    drawPixelTree(this, w * 0.78, h * 0.58, 4).setDepth(-3);
-    drawPixelRock(this, w * 0.42, h - 230, 5).setDepth(-3);
-    drawPixelRock(this, w * 0.64, 180, 4).setDepth(-3);
+
+    this.battleGrid = createGridLayout(w, h);
+    this.drawBattleGrid();
 
     const state = getState();
-    const compact = w < 700;
-    const playerX = compact ? Math.max(62, w * 0.2) : Math.max(150, w * 0.2);
-    const enemyX = compact ? Math.min(w - 62, w * 0.8) : Math.min(w - 150, w * 0.78);
-    const topY = compact ? 150 : 220;
-    const usableHeight = Math.max(260, h - (compact ? 280 : 260));
-    const playerGap = compact ? Math.max(72, usableHeight / 3.2) : 105;
-    this.battleUnits = state.mercenaries.slice(0, compact ? 4 : 6).map((m, i) =>
-      mercToBattleUnit(m, playerX + (compact ? 0 : (i % 2) * 80), topY + Math.floor(i / (compact ? 1 : 2)) * playerGap)
-    );
-    this.battleUnits.push(...state.animals.slice(0, compact ? 1 : 2).map((a, i) =>
-      animalToBattleUnit(a, playerX + (compact ? 28 : -55), Math.min(h - 150, topY + (i + 3) * 74))
-    ));
+    const grid = this.battleGrid;
+    const playerCells: GridCell[] = [];
+    const enemyCells: GridCell[] = [];
+    for (let row = 0; row < grid.rows; row++) {
+      playerCells.push({ col: 1, row });
+      if (grid.cols > 7) playerCells.push({ col: 2, row });
+      enemyCells.push({ col: grid.cols - 2, row });
+      if (grid.cols > 7) enemyCells.push({ col: grid.cols - 3, row });
+    }
+
+    this.battleUnits = state.mercenaries.slice(0, Math.min(6, playerCells.length)).map((m, i) => {
+      const p = cellToWorld(grid, playerCells[i]);
+      return mercToBattleUnit(m, p.x, p.y);
+    });
+    this.battleUnits.push(...state.animals.slice(0, 2).map((a, i) => {
+      const cell = playerCells[Math.min(playerCells.length - 1, state.mercenaries.length + i)];
+      const p = cellToWorld(grid, cell);
+      return animalToBattleUnit(a, p.x, p.y);
+    }));
+
     const avgLevel = state.mercenaries.length ? state.mercenaries.reduce((n,m)=>n+m.level,0) / state.mercenaries.length : 1;
     const baseStrength = state.explorationMode === 'Adaptive'
       ? Math.max(1, Math.round(avgLevel * 0.75))
@@ -309,23 +330,83 @@ export class GameScene extends Phaser.Scene {
     const scaledStrength = Math.max(1, baseStrength + difficultyOffset);
     const enemies = enemyBattleUnits(enemy.kind, scaledStrength);
     enemies.forEach((u, i) => {
-      u.x = enemyX - (compact ? 0 : (i % 2) * 74);
-      u.y = topY + Math.floor(i / (compact ? 1 : 2)) * (compact ? Math.max(72, usableHeight / 3.2) : 95);
+      const p = cellToWorld(grid, enemyCells[Math.min(i, enemyCells.length - 1)]);
+      u.x = p.x; u.y = p.y;
     });
     this.battleUnits.push(...enemies);
+
     this.round = 1;
     for (const unit of this.battleUnits) this.createBattleUnitSprite(unit);
-    this.battleMessage = this.add.text(w / 2, 32, '', { fontFamily: 'Georgia', fontSize: '20px', color: '#f6e8bf', backgroundColor: '#1a1815cc', padding: { x: 12, y: 7 } }).setOrigin(0.5).setDepth(100);
+    this.battleMessage = this.add.text(w / 2, Math.max(28, grid.originY - 30), '', {
+      fontFamily: 'Georgia', fontSize: w < 700 ? '13px' : '18px', color: '#f6e8bf',
+      backgroundColor: '#1a1815dd', padding: { x: 10, y: 6 },
+      wordWrap: { width: Math.max(250, w - 40) }
+    }).setOrigin(0.5).setDepth(100);
+
     this.refreshBattleHud();
-    this.showBattleMessage('Select a blue mercenary, then click inside the blue movement circle.');
+    this.showBattleMessage('Select a blue unit. Reachable grid cells will light up.');
     this.input.removeAllListeners('pointerdown');
     this.input.on('pointerdown', (p: Phaser.Input.Pointer, currentlyOver: Phaser.GameObjects.GameObject[]) => {
-      // Clicking an interactive unit is handled by that unit. Do not also treat
-      // the same click as a ground-movement command.
       if (currentlyOver.length > 0) return;
       this.onBattlePointer(p);
     });
     this.emit({ type: 'battle', round: this.round });
+  }
+
+  private drawBattleGrid(): void {
+    const grid = this.battleGrid;
+    if (!grid) return;
+    const g = this.add.graphics().setDepth(-8);
+    g.fillStyle(0x141817, 0.18);
+    g.fillRect(grid.originX, grid.originY, grid.cols * grid.cellSize, grid.rows * grid.cellSize);
+    g.lineStyle(1, 0x8e9a82, 0.22);
+    for (let col = 0; col <= grid.cols; col++) {
+      const x = grid.originX + col * grid.cellSize;
+      g.lineBetween(x, grid.originY, x, grid.originY + grid.rows * grid.cellSize);
+    }
+    for (let row = 0; row <= grid.rows; row++) {
+      const y = grid.originY + row * grid.cellSize;
+      g.lineBetween(grid.originX, y, grid.originX + grid.cols * grid.cellSize, y);
+    }
+
+    this.battleObstacles = new Set(defaultObstacleCells(grid).map(cellKey));
+    for (const key of this.battleObstacles) {
+      const [col,row] = key.split(',').map(Number);
+      const p = cellToWorld(grid,{col,row});
+      const tile = this.add.rectangle(p.x,p.y,grid.cellSize-6,grid.cellSize-6,0x3f4737,0.82)
+        .setStrokeStyle(2,0x69745b,0.9).setDepth(-4);
+      if ((col + row) % 2 === 0) drawPixelRock(this,p.x,p.y,Math.max(2,grid.cellSize/18)).setDepth(-3);
+      else drawPixelTree(this,p.x,p.y,Math.max(2,grid.cellSize/18)).setDepth(-3);
+      tile.setData('obstacle',true);
+    }
+  }
+
+  private clearGridHighlights(): void {
+    for (const h of this.gridHighlights) h.destroy();
+    this.gridHighlights = [];
+  }
+
+  private unitCell(unit: BattleUnit): GridCell | null {
+    return this.battleGrid ? worldToCell(this.battleGrid, unit.x, unit.y) : null;
+  }
+
+  private occupiedCells(ignoreId?: string): Set<string> {
+    const blocked = new Set(this.battleObstacles);
+    for (const u of this.battleUnits) {
+      if (u.id === ignoreId || u.health <= 0) continue;
+      const cell = this.unitCell(u);
+      if (cell) blocked.add(cellKey(cell));
+    }
+    return blocked;
+  }
+
+  private movementSteps(unit: BattleUnit): number {
+    const bonus = unit.statuses?.includes('Dash') ? 2 : 0;
+    return Math.max(2, Math.min(6, Math.round(unit.movement / 55) + bonus));
+  }
+
+  private adjacentCells(cell: GridCell): GridCell[] {
+    return this.battleGrid ? neighbours(this.battleGrid, cell) : [];
   }
 
   private createBattleUnitSprite(unit: BattleUnit): void {
@@ -368,130 +449,237 @@ export class GameScene extends Phaser.Scene {
   private onUnitClicked(id: string): void {
     const unit = this.battleUnits.find(u => u.id === id && u.health > 0);
     if (!unit) return;
+
     if (unit.side === 'player') {
       if (unit.acted) return;
       this.selectedUnitId = unit.id;
+      this.selectedSkillId = undefined;
       this.drawMovementRange(unit);
       this.showBattleMessage(unit.moved
-        ? `${unit.name} has already moved. Choose an enemy to attack or end the unit.`
-        : `Selected ${unit.name}. Click inside the blue circle to move.`);
+        ? `${unit.name} already moved. Attack, use a skill, Guard, or End Unit.`
+        : `Selected ${unit.name}. Tap a highlighted grid cell to move.`);
       this.refreshBattleHud();
       return;
     }
-    const selected = this.battleUnits.find(u => u.id === this.selectedUnitId && u.health > 0 && !u.acted);
+
+    const selected = this.battleUnits.find(u => u.id === this.selectedUnitId && u.side === 'player' && u.health > 0 && !u.acted);
     if (!selected) return;
-    const dist = Phaser.Math.Distance.Between(selected.x, selected.y, unit.x, unit.y);
+    if (this.selectedSkillId) {
+      this.useSkillOnEnemy(selected, unit, this.selectedSkillId);
+      return;
+    }
+    this.basicAttack(selected, unit);
+  }
+
+  private basicAttack(selected: BattleUnit, unit: BattleUnit): void {
+    const aCell = this.unitCell(selected), tCell = this.unitCell(unit);
+    if (!aCell || !tCell) return;
     const merc = getState().mercenaries.find(m => m.id === selected.mercenaryId);
-    let attackRange = merc?.class === 'Ranger' ? 300 : merc?.class === 'Spearman' ? 175 : 135;
-    if (merc?.learnedSkills.includes('Long Reach')) attackRange += 45;
-    if (dist > attackRange) { this.showBattleMessage(`Target is outside attack range (${attackRange}).`); return; }
-    const attacker = this.battleSprites.get(selected.id);
-    const defender = this.battleSprites.get(unit.id);
-    const attackerActor = attacker?.getByName('actor');
-    const defenderActor = defender?.getByName('actor');
-    if (attackerActor instanceof Phaser.GameObjects.Sprite) {
-      attackerActor.setFlipX(unit.x < selected.x);
-      playActor(attackerActor, 'attack');
+    let range = merc?.class === 'Ranger' ? 5 : merc?.class === 'Spearman' ? 2 : 1;
+    if (merc?.learnedSkills.includes('Long Reach')) range += 1;
+    if (manhattan(aCell,tCell) > range) {
+      this.showBattleMessage(`Target is outside attack range (${range} grid cells).`);
+      return;
     }
-    const targetFacing = unit.facing ?? -1;
-    const backstab = (selected.x < unit.x && targetFacing === 1) || (selected.x > unit.x && targetFacing === -1);
-    let dmg = Math.max(1, selected.power + Phaser.Math.Between(-2, 3));
+    this.performAttack(selected, unit, 1, 'Attack');
+  }
+
+  private performAttack(attacker: BattleUnit, target: BattleUnit, multiplier = 1, label = 'Attack', status?: string): void {
+    const attackerSprite = this.battleSprites.get(attacker.id);
+    const defenderSprite = this.battleSprites.get(target.id);
+    const aa = attackerSprite?.getByName('actor');
+    const da = defenderSprite?.getByName('actor');
+    if (aa instanceof Phaser.GameObjects.Sprite) {
+      aa.setFlipX(target.x < attacker.x);
+      playActor(aa,'attack');
+    }
+    const targetFacing = target.facing ?? -1;
+    const backstab = (attacker.x < target.x && targetFacing === 1) || (attacker.x > target.x && targetFacing === -1);
+    let dmg = Math.max(1, Math.round((attacker.power + Phaser.Math.Between(-2,3)) * multiplier));
     if (backstab) dmg = Math.ceil(dmg * 1.3);
-    const surrounders = this.battleUnits.filter(u => u.side === 'player' && u.health > 0 && u.id !== selected.id && Phaser.Math.Distance.Between(u.x,u.y,unit.x,unit.y) <= 130).length;
-    if (surrounders >= 1) dmg = Math.ceil(dmg * (1 + Math.min(0.3, surrounders * 0.1)));
-    if (merc?.learnedSkills.includes('Aimed Shot') && merc.class === 'Ranger') dmg += 3;
-    if (merc?.learnedSkills.includes('Heavy Strike') && merc.class === 'Warrior') unit.statuses = Array.from(new Set([...(unit.statuses ?? []), 'Bleeding']));
-    if ((merc?.learnedSkills.includes('Poison Blade') && merc.class === 'Rogue') || merc?.weaponOil === 'Poison') {
-      unit.statuses = Array.from(new Set([...(unit.statuses ?? []), 'Poison']));
-    }
-    if (attackRange <= 175) {
-      selected.engagedWithId = unit.id;
-      unit.engagedWithId = selected.id;
-    }
-    this.time.delayedCall(180, () => {
-      const wasDying = unit.statuses?.includes('Dying') ?? false;
-      applyDamage(unit, dmg);
-      if (unit.health <= 0 && !wasDying) {
-        unit.health = 1;
-        unit.statuses = Array.from(new Set([...(unit.statuses ?? []), 'Dying']));
-      } else if (wasDying && unit.health <= 0) {
-        unit.health = 0;
+    if (status) target.statuses = Array.from(new Set([...(target.statuses ?? []),status]));
+    this.time.delayedCall(150,()=>{
+      const wasDying = target.statuses?.includes('Dying') ?? false;
+      applyDamage(target,dmg);
+      if (target.health <= 0 && !wasDying) {
+        target.health = 1;
+        target.statuses = Array.from(new Set([...(target.statuses ?? []),'Dying']));
+      } else if (wasDying && target.health <= 0) target.health = 0;
+      if (da instanceof Phaser.GameObjects.Sprite) {
+        da.setTintFill(0xffffff);
+        playActor(da,target.health <= 0 ? 'death' : 'hurt',target.health > 0);
+        this.time.delayedCall(90,()=>da.clearTint());
       }
-      if (defenderActor instanceof Phaser.GameObjects.Sprite) {
-        defenderActor.setTintFill(0xffffff);
-        playActor(defenderActor, unit.health <= 0 ? 'death' : 'hurt', unit.health > 0);
-        this.time.delayedCall(90, () => defenderActor.clearTint());
+      const aCell=this.unitCell(attacker),tCell=this.unitCell(target);
+      if (aCell && tCell && manhattan(aCell,tCell) === 1) {
+        attacker.engagedWithId=target.id; target.engagedWithId=attacker.id;
       }
-      selected.acted = true;
-      this.showBattleMessage(`${selected.name} hits ${unit.name} for ${dmg}${backstab ? ' (BACKSTAB)' : ''}${unit.statuses?.length ? ` · ${unit.statuses.join(', ')}` : ''}.`);
-      this.updateBattleSprite(unit);
+      attacker.acted=true;
+      this.updateBattleSprite(target);
+      this.showBattleMessage(`${label}: ${attacker.name} hits ${target.name} for ${dmg}${backstab?' · BACKSTAB':''}${status?` · ${status}`:''}.`);
       this.afterPlayerAction();
     });
   }
 
-  private onBattlePointer(p: Phaser.Input.Pointer): void {
-    const selected = this.battleUnits.find(u => u.id === this.selectedUnitId && u.side === 'player' && u.health > 0 && !u.acted);
-    if (!selected || selected.moved) return;
-    const d = Phaser.Math.Distance.Between(selected.x, selected.y, p.worldX, p.worldY);
-    if (d > selected.movement) { this.showBattleMessage('Destination is outside movement range.'); return; }
-    const nx = Phaser.Math.Clamp(p.worldX, 60, this.scale.width - 60);
-    const ny = Phaser.Math.Clamp(p.worldY, 90, this.scale.height - 90);
-    if (selected.engagedWithId) {
-      const opponent = this.battleUnits.find(u => u.id === selected.engagedWithId && u.health > 0);
-      if (opponent) {
-        const wasDying = selected.statuses?.includes('Dying') ?? false;
-        applyDamage(selected, Math.max(1, Math.floor(opponent.power * 0.4)));
-        if (selected.health <= 0 && !wasDying) {
-          selected.health = 1;
-          selected.statuses = Array.from(new Set([...(selected.statuses ?? []), 'Dying']));
-        } else if (wasDying && selected.health <= 0) selected.health = 0;
-        opponent.engagedWithId = undefined;
-        selected.engagedWithId = undefined;
-        this.updateBattleSprite(selected);
-        this.showBattleMessage(`${selected.name} disengages and suffers an opportunity attack.`);
-        if (selected.health <= 0) {
-          this.removeDeadUnits();
-          this.checkBattleEnd();
-          return;
-        }
-      }
+  selectBattleSkill(skillId: string): void {
+    const selected = this.battleUnits.find(u=>u.id===this.selectedUnitId && u.side==='player' && u.health>0 && !u.acted);
+    if (!selected) return;
+    const merc = getState().mercenaries.find(m=>m.id===selected.mercenaryId);
+    const skill = battleSkillsFor(merc?.class).find(s=>s.id===skillId);
+    if (!skill) return;
+    if (getState().valor < skill.cost) {
+      this.showBattleMessage('Not enough Valor for that skill.');
+      return;
     }
-    const container = this.battleSprites.get(selected.id);
-    const actor = container?.getByName('actor');
-    if (actor instanceof Phaser.GameObjects.Sprite) {
-      actor.setFlipX(nx < selected.x);
-      setWalk(actor, true);
+    if (skill.target === 'self') {
+      this.useSelfSkill(selected,skill);
+      return;
     }
-    selected.facing = nx < selected.x ? -1 : 1;
-    selected.x = nx; selected.y = ny; selected.moved = true;
-    this.movementRange?.destroy();
-    this.movementRange = undefined;
-    if (container) {
-      this.tweens.add({
-        targets: container, x: nx, y: ny, duration: 260, ease: 'Sine.easeOut',
-        onComplete: () => {
-          if (actor instanceof Phaser.GameObjects.Sprite) setWalk(actor, false);
-          this.showBattleMessage(`${selected.name} moved. Choose an enemy to attack, or end the unit.`);
-          this.refreshBattleHud();
-        }
+    this.selectedSkillId=skill.id;
+    this.clearGridHighlights();
+    this.showBattleMessage(`${skill.name}: tap an enemy in range.`);
+    this.refreshBattleHud();
+  }
+
+  private useSelfSkill(unit: BattleUnit, skill: BattleSkill): void {
+    const state=getState();
+    if (state.valor < skill.cost) return;
+    state.valor -= skill.cost;
+    const adjacentEnemies=this.battleUnits.filter(e=>{
+      if(e.side!=='enemy'||e.health<=0) return false;
+      const a=this.unitCell(unit),b=this.unitCell(e);
+      return !!a&&!!b&&manhattan(a,b)===1;
+    });
+    if (['whirlwind','cleave','sweep'].includes(skill.id)) {
+      for(const e of adjacentEnemies){ applyDamage(e,Math.max(1,Math.round(unit.power*.8))); this.updateBattleSprite(e); }
+      unit.acted=true;
+    } else if (skill.id==='riposte') {
+      unit.armor+=4; unit.statuses=Array.from(new Set([...(unit.statuses??[]),'Riposte'])); unit.acted=true;
+    } else if (skill.id==='rage') {
+      unit.power+=4; unit.statuses=Array.from(new Set([...(unit.statuses??[]),'Rage'])); unit.acted=true;
+    } else if (skill.id==='quickstep'||skill.id==='dash') {
+      unit.moved=false; unit.statuses=Array.from(new Set([...(unit.statuses??[]),'Dash']));
+      this.drawMovementRange(unit);
+    } else if (skill.id==='spear-wall') {
+      unit.statuses=Array.from(new Set([...(unit.statuses??[]),'SpearWall'])); unit.armor+=2; unit.acted=true;
+    } else if (skill.id==='brace') {
+      unit.armor+=5; unit.acted=true;
+    } else if (skill.id==='smoke-bomb') {
+      unit.engagedWithId=undefined; unit.statuses=Array.from(new Set([...(unit.statuses??[]),'Dodge'])); unit.moved=false;
+      this.drawMovementRange(unit);
+    }
+    this.updateBattleSprite(unit);
+    this.showBattleMessage(`${unit.name} uses ${skill.name}.`);
+    if(unit.acted) this.afterPlayerAction(); else this.refreshBattleHud();
+  }
+
+  private useSkillOnEnemy(attacker: BattleUnit, target: BattleUnit, skillId: string): void {
+    const state=getState();
+    const merc=state.mercenaries.find(m=>m.id===attacker.mercenaryId);
+    const skill=battleSkillsFor(merc?.class).find(s=>s.id===skillId);
+    if(!skill||state.valor<skill.cost) return;
+    const a=this.unitCell(attacker),t=this.unitCell(target);
+    if(!a||!t) return;
+    const d=manhattan(a,t);
+    const ranges:Record<string,number>={
+      'shield-bash':1,'taunt':1,'rend':1,'execute':1,'aimed-shot':6,'pinning-shot':5,
+      'volley':5,'long-thrust':3,'poison-blade':1,'backstab':1
+    };
+    if(d>(ranges[skillId]??1)){this.showBattleMessage(`${skill.name}: target out of range.`);return;}
+    state.valor-=skill.cost;
+    this.selectedSkillId=undefined;
+
+    if(skillId==='taunt'){
+      target.statuses=Array.from(new Set([...(target.statuses??[]),'Weakened']));
+      attacker.acted=true; this.showBattleMessage(`${target.name} is Weakened.`); this.afterPlayerAction(); return;
+    }
+    if(skillId==='volley'){
+      const victims=this.battleUnits.filter(e=>{
+        if(e.side!=='enemy'||e.health<=0)return false;
+        const ec=this.unitCell(e); return !!ec&&manhattan(ec,t)<=1;
       });
+      for(const e of victims){applyDamage(e,Math.max(1,Math.round(attacker.power*.75)));this.updateBattleSprite(e);}
+      attacker.acted=true;this.showBattleMessage(`Volley hits ${victims.length} enemies.`);this.afterPlayerAction();return;
     }
+    let mult=1.15; let status:string|undefined;
+    if(skillId==='shield-bash'){mult=.75;status='Stunned';}
+    if(skillId==='rend'){mult=1.15;status='Bleeding';}
+    if(skillId==='execute')mult=target.health<=target.maxHealth*.5?1.9:1.15;
+    if(skillId==='aimed-shot')mult=1.45;
+    if(skillId==='pinning-shot'){mult=.9;status='Rooted';}
+    if(skillId==='long-thrust')mult=1.2;
+    if(skillId==='poison-blade'){mult=1.0;status='Poison';}
+    if(skillId==='backstab')mult=1.55;
+    this.performAttack(attacker,target,mult,skill.name,status);
+  }
+
+  private onBattlePointer(p: Phaser.Input.Pointer): void {
+    if(!this.battleGrid) return;
+    const cell=worldToCell(this.battleGrid,p.worldX,p.worldY);
+    if(!cell)return;
+    this.moveSelectedToCell(cell);
+  }
+
+  private moveSelectedToCell(cell: GridCell): void {
+    const selected=this.battleUnits.find(u=>u.id===this.selectedUnitId&&u.side==='player'&&u.health>0&&!u.acted);
+    if(!selected||selected.moved||!this.battleGrid)return;
+    const start=this.unitCell(selected); if(!start)return;
+    const blocked=this.occupiedCells(selected.id);
+    const reachable=reachableCells(this.battleGrid,start,this.movementSteps(selected),blocked);
+    if(!reachable.has(cellKey(cell))){this.showBattleMessage('That grid cell is blocked or unreachable.');return;}
+
+    if(selected.engagedWithId){
+      const opponent=this.battleUnits.find(u=>u.id===selected.engagedWithId&&u.health>0);
+      if(opponent){applyDamage(selected,Math.max(1,Math.floor(opponent.power*.4)));this.updateBattleSprite(selected);opponent.engagedWithId=undefined;}
+      selected.engagedWithId=undefined;
+      if(selected.health<=0){this.removeDeadUnits();this.checkBattleEnd();return;}
+    }
+    const path=shortestPath(this.battleGrid,start,[cell],blocked,this.movementSteps(selected));
+    const container=this.battleSprites.get(selected.id);
+    const actor=container?.getByName('actor');
+    if(actor instanceof Phaser.GameObjects.Sprite)setWalk(actor,true);
+    this.clearGridHighlights();
+
+    let index=0;
+    const step=()=>{
+      if(index>=path.length){
+        selected.moved=true;
+        selected.statuses=selected.statuses?.filter(s=>s!=='Dash');
+        if(actor instanceof Phaser.GameObjects.Sprite)setWalk(actor,false);
+        this.showBattleMessage(`${selected.name} moved ${path.length} grid cells.`);
+        this.refreshBattleHud();return;
+      }
+      const world=cellToWorld(this.battleGrid!,path[index++]);
+      selected.facing=world.x<selected.x?-1:1; selected.x=world.x; selected.y=world.y;
+      if(actor instanceof Phaser.GameObjects.Sprite)actor.setFlipX(selected.facing===-1);
+      if(container)this.tweens.add({targets:container,x:world.x,y:world.y,duration:95,ease:'Linear',onComplete:step});
+      else step();
+    };
+    step();
   }
 
   private drawMovementRange(unit: BattleUnit): void {
-    this.movementRange?.destroy();
-    this.movementRange = undefined;
-    if (unit.moved || unit.acted) return;
-    this.movementRange = this.add
-      .circle(unit.x, unit.y, unit.movement, 0x4aa3df, 0.12)
-      .setStrokeStyle(3, 0x82cfff, 0.9)
-      .setDepth(5);
+    this.clearGridHighlights();
+    if(unit.moved||unit.acted||!this.battleGrid)return;
+    const start=this.unitCell(unit); if(!start)return;
+    const reachable=reachableCells(this.battleGrid,start,this.movementSteps(unit),this.occupiedCells(unit.id));
+    for(const key of reachable.keys()){
+      const [col,row]=key.split(',').map(Number);
+      const p=cellToWorld(this.battleGrid,{col,row});
+      const tile=this.add.rectangle(p.x,p.y,this.battleGrid.cellSize-8,this.battleGrid.cellSize-8,0x3f91c7,.28)
+        .setStrokeStyle(2,0x83cfff,.8).setDepth(4).setInteractive({useHandCursor:true});
+      tile.on('pointerdown',(_p:Phaser.Input.Pointer,_x:number,_y:number,ev:Phaser.Types.Input.EventData)=>{
+        ev.stopPropagation();this.moveSelectedToCell({col,row});
+      });
+      this.gridHighlights.push(tile);
+    }
   }
 
   endSelectedUnit(): void {
     const selected = this.battleUnits.find(u => u.id === this.selectedUnitId && u.side === 'player' && u.health > 0);
     if (!selected) return;
     selected.acted = true;
+    this.clearGridHighlights();
     this.movementRange?.destroy();
     this.movementRange = undefined;
     this.afterPlayerAction();
@@ -518,6 +706,7 @@ export class GameScene extends Phaser.Scene {
     if (!selected) return;
     selected.armor = Math.min(selected.maxArmor + 5, selected.armor + 4);
     selected.acted = true;
+    this.clearGridHighlights();
     this.movementRange?.destroy();
     this.movementRange = undefined;
     this.showBattleMessage(`${selected.name} guards and gains 4 temporary armor.`);
@@ -526,8 +715,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private afterPlayerAction(): void {
+    this.clearGridHighlights();
     this.movementRange?.destroy();
     this.movementRange = undefined;
+    this.selectedSkillId = undefined;
     this.selectedUnitId = undefined;
     this.removeDeadUnits();
     if (this.checkBattleEnd()) return;
@@ -536,67 +727,62 @@ export class GameScene extends Phaser.Scene {
   }
 
   private enemyTurn(): void {
-    const enemies = this.battleUnits.filter(u => u.side === 'enemy' && u.health > 0);
-    const players = this.battleUnits.filter(u => u.side === 'player' && u.health > 0);
-    for (const enemy of enemies) {
-      const target = players.filter(p => p.health > 0).sort((a, b) => Phaser.Math.Distance.Between(enemy.x, enemy.y, a.x, a.y) - Phaser.Math.Distance.Between(enemy.x, enemy.y, b.x, b.y))[0];
-      if (!target) break;
-      let dist = Phaser.Math.Distance.Between(enemy.x, enemy.y, target.x, target.y);
-      if (dist > 120) {
-        const ang = Phaser.Math.Angle.Between(enemy.x, enemy.y, target.x, target.y);
-        const step = Math.min(enemy.movement, Math.max(0, dist - 95));
-        enemy.facing = target.x < enemy.x ? -1 : 1;
-        enemy.x += Math.cos(ang) * step; enemy.y += Math.sin(ang) * step;
-        const ec = this.battleSprites.get(enemy.id);
-        const ea = ec?.getByName('actor');
-        if (ea instanceof Phaser.GameObjects.Sprite) {
-          ea.setFlipX(target.x < enemy.x);
-          setWalk(ea, true);
-        }
-        ec?.setPosition(enemy.x, enemy.y);
-        if (ea instanceof Phaser.GameObjects.Sprite) setWalk(ea, false);
-        dist = Phaser.Math.Distance.Between(enemy.x, enemy.y, target.x, target.y);
+    if(!this.battleGrid)return;
+    const enemies=this.battleUnits.filter(u=>u.side==='enemy'&&u.health>0);
+    const players=this.battleUnits.filter(u=>u.side==='player'&&u.health>0);
+    for(const enemy of enemies){
+      if(enemy.statuses?.includes('Stunned')){
+        enemy.statuses=enemy.statuses.filter(s=>s!=='Stunned');
+        continue;
       }
-      if (dist <= 125) {
-        const ec = this.battleSprites.get(enemy.id);
-        const tc = this.battleSprites.get(target.id);
-        const ea = ec?.getByName('actor');
-        const ta = tc?.getByName('actor');
-        if (ea instanceof Phaser.GameObjects.Sprite) {
-          ea.setFlipX(target.x < enemy.x);
-          playActor(ea, 'attack');
+      const target=players.filter(p=>p.health>0).sort((a,b)=>{
+        const ac=this.unitCell(a),bc=this.unitCell(b),ec=this.unitCell(enemy);
+        return (!ac||!ec?99:manhattan(ec,ac))-(!bc||!ec?99:manhattan(ec,bc));
+      })[0];
+      if(!target)break;
+      const ec=this.unitCell(enemy),tc=this.unitCell(target);
+      if(!ec||!tc)continue;
+
+      let dist=manhattan(ec,tc);
+      if(dist>1 && !enemy.statuses?.includes('Rooted')){
+        const goals=this.adjacentCells(tc).filter(g=>!this.occupiedCells(enemy.id).has(cellKey(g)));
+        const blocked=this.occupiedCells(enemy.id);
+        const path=shortestPath(this.battleGrid,ec,goals,blocked,this.movementSteps(enemy));
+        const destination=path[Math.min(path.length,this.movementSteps(enemy))-1];
+        if(destination){
+          const world=cellToWorld(this.battleGrid,destination);
+          enemy.facing=world.x<enemy.x?-1:1;enemy.x=world.x;enemy.y=world.y;
+          this.battleSprites.get(enemy.id)?.setPosition(world.x,world.y);
         }
-        const backstab = (enemy.x < target.x && (target.facing ?? 1) === 1) || (enemy.x > target.x && (target.facing ?? 1) === -1);
-        let dmg = Math.max(1, enemy.power + Phaser.Math.Between(-2, 2));
-        if (backstab) dmg = Math.ceil(dmg * 1.3);
-        const adjacentAllies = this.battleUnits.filter(u => u.side === 'player' && u.health > 0 && u.id !== target.id && Phaser.Math.Distance.Between(u.x,u.y,target.x,target.y) <= 85).length;
-        if (adjacentAllies > 0) dmg = Math.max(1, Math.floor(dmg * 0.8));
-        const wasDying = target.statuses?.includes('Dying') ?? false;
-        applyDamage(target, dmg);
-        if (target.health <= 0 && !wasDying) {
-          target.health = 1;
-          target.statuses = Array.from(new Set([...(target.statuses ?? []), 'Dying']));
-        } else if (wasDying && target.health <= 0) target.health = 0;
-        enemy.engagedWithId = target.id;
-        target.engagedWithId = enemy.id;
-        if (ta instanceof Phaser.GameObjects.Sprite) playActor(ta, target.health <= 0 ? 'death' : 'hurt', target.health > 0);
-        this.updateBattleSprite(target);
+      }
+      enemy.statuses=enemy.statuses?.filter(s=>s!=='Rooted');
+      const ec2=this.unitCell(enemy),tc2=this.unitCell(target);
+      dist=ec2&&tc2?manhattan(ec2,tc2):99;
+      if(dist===1){
+        let dmg=Math.max(1,enemy.power+Phaser.Math.Between(-2,2));
+        if(enemy.statuses?.includes('Weakened'))dmg=Math.max(1,Math.floor(dmg*.7));
+        if(target.statuses?.includes('Dodge'))dmg=Math.max(1,Math.floor(dmg*.55));
+        if(target.statuses?.includes('SpearWall')){
+          applyDamage(enemy,Math.max(1,Math.round(target.power*.6)));this.updateBattleSprite(enemy);
+          target.statuses=target.statuses.filter(s=>s!=='SpearWall');
+        }
+        applyDamage(target,dmg);this.updateBattleSprite(target);
+        if(target.statuses?.includes('Riposte')){
+          applyDamage(enemy,Math.max(1,Math.round(target.power*.5)));this.updateBattleSprite(enemy);
+          target.statuses=target.statuses.filter(s=>s!=='Riposte');
+        }
+        enemy.engagedWithId=target.id;target.engagedWithId=enemy.id;
       }
     }
-    // Damage-over-time resolves between rounds.
-    for (const u of this.battleUnits.filter(u => u.health > 0)) {
-      let dot = 0;
-      if (u.statuses?.includes('Poison')) dot += 2;
-      if (u.statuses?.includes('Bleeding')) dot += 3;
-      if (dot) {
-        u.health = Math.max(0, u.health - dot);
-        this.updateBattleSprite(u);
-      }
+    for(const u of this.battleUnits.filter(u=>u.health>0)){
+      let dot=0;if(u.statuses?.includes('Poison'))dot+=2;if(u.statuses?.includes('Bleeding'))dot+=3;
+      if(dot){u.health=Math.max(0,u.health-dot);this.updateBattleSprite(u);}
+      u.statuses=u.statuses?.filter(s=>s!=='Dodge');
     }
     this.removeDeadUnits();
-    if (this.checkBattleEnd()) return;
-    this.round += 1;
-    for (const u of this.battleUnits.filter(u => u.side === 'player' && u.health > 0)) { u.acted = false; u.moved = false; }
+    if(this.checkBattleEnd())return;
+    this.round+=1;
+    for(const u of this.battleUnits.filter(u=>u.side==='player'&&u.health>0)){u.acted=false;u.moved=false;}
     this.showBattleMessage(`Round ${this.round}. Your company may act.`);
     this.refreshBattleHud();
   }
@@ -677,7 +863,13 @@ export class GameScene extends Phaser.Scene {
   private refreshBattleHud(): void {
     const selected = this.battleUnits.find(u => u.id === this.selectedUnitId);
     const enemies = this.battleUnits.filter(u => u.side === 'enemy' && u.health > 0).length;
-    this.emit({ type: 'battleHud', round: this.round, enemies, valor: getState().valor, selected: selected ? { name: selected.name, health: selected.health, armor: selected.armor, moved: selected.moved, acted: selected.acted } : null });
+    const merc = selected?.mercenaryId ? getState().mercenaries.find(m=>m.id===selected.mercenaryId) : undefined;
+    const skills = battleSkillsFor(merc?.class);
+    this.emit({
+      type:'battleHud',round:this.round,enemies,valor:getState().valor,
+      selected:selected?{name:selected.name,health:selected.health,armor:selected.armor,moved:selected.moved,acted:selected.acted,className:merc?.class}:null,
+      skills,selectedSkillId:this.selectedSkillId
+    });
     for (const [id, sprite] of this.battleSprites.entries()) {
       const u = this.battleUnits.find(u => u.id === id);
       if (u?.side === 'player' && u.health > 0) sprite.setScale(id === this.selectedUnitId ? 1.15 : 1);
