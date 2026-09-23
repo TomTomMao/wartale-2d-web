@@ -232,3 +232,12 @@ button{user-select:none}
   }
   .battle-actions.expanded-actions .action-btn{flex:0 0 92px;min-width:92px;scroll-snap-align:start}
 }
+
+.item-actions{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.equip-targets{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px}
+.equip-targets .mini{margin:0}
+@media(max-width:700px){
+  .item-actions{width:100%;align-items:stretch}
+  .equip-targets{justify-content:flex-start}
+  .equip-person{flex:1 1 120px}
+}
