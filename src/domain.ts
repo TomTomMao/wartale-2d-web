@@ -35,7 +35,7 @@ export function createInitialState(companyName = 'Iron Wolves', leaderClass: Mer
     fatigue: 0, maxFatigue: 100, valor: 2, maxValor: 4,
     suspicion: 0, wantedLevel: 0, knowledge: 0, knowledgePoints: 0,
     unlockedKnowledge: [], prisoners: [], ponies: [], campFacilities: [],
-    torches: 6, tombs: [], tradeGoods: {}
+    torches: 6, tombs: [], tradeGoods: {}, materials: {}
   });
 }
 
