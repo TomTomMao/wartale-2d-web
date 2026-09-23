@@ -1,11 +1,12 @@
 import { createInitialState, deserializeState, serializeState } from './domain';
 import type { GameState, MercClass } from './types';
+import { ensureCoreSystems } from './systems';
 
 const SAVE_KEY = 'ironbound-save-v1';
 let state: GameState | null = null;
 
 export function getState(): GameState {
-  if (!state) state = createInitialState();
+  if (!state) state = ensureCoreSystems(createInitialState());
   return state;
 }
 
@@ -27,7 +28,7 @@ export function loadGame(): GameState | null {
   const raw = localStorage.getItem(SAVE_KEY);
   if (!raw) return null;
   const loaded = deserializeState(raw);
-  if (loaded) state = loaded;
+  if (loaded) state = ensureCoreSystems(loaded);
   return loaded;
 }
 
