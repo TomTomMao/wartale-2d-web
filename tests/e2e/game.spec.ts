@@ -74,3 +74,48 @@ test('grid battle exposes blocking cells and moves only to reachable tiles', asy
   expect(Math.floor((moved.x-grid.originX)/grid.cellSize)).toBe(candidates[0].col);
   expect(Math.floor((moved.y-grid.originY)/grid.cellSize)).toBe(candidates[0].row);
 });
+
+
+test('dead unit disappears and immediately releases its grid cell', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New Company' }).click();
+  await page.getByRole('button', { name: 'Begin Journey' }).click();
+  await page.waitForFunction(() => Boolean((window as any).__GAME_TEST_API__));
+  await page.evaluate(() => (window as any).__GAME_TEST_API__.triggerEncounter('bandit-1'));
+  await page.getByRole('button', { name: 'Fight' }).click();
+  await expect(page.getByTestId('battle-hud')).toBeVisible();
+
+  const before:any = await page.evaluate(() => (window as any).__GAME_TEST_API__.battleSnapshot());
+  const enemy = before.units.find((u:any) => u.side === 'enemy' && u.health > 0);
+  const grid = before.grid;
+  const col = Math.floor((enemy.x-grid.originX)/grid.cellSize);
+  const row = Math.floor((enemy.y-grid.originY)/grid.cellSize);
+  expect(await page.evaluate(({col,row}) => (window as any).__GAME_TEST_API__.isCellBlocked(col,row), {col,row})).toBe(true);
+
+  await page.evaluate(() => (window as any).__GAME_TEST_API__.killFirstEnemy());
+  const after:any = await page.evaluate(() => (window as any).__GAME_TEST_API__.battleSnapshot());
+  const dead = after.units.find((u:any) => u.id === enemy.id);
+  expect(dead.health).toBe(0);
+  expect(dead.visible).toBe(false);
+  expect(await page.evaluate(({col,row}) => (window as any).__GAME_TEST_API__.isCellBlocked(col,row), {col,row})).toBe(false);
+});
+
+test('temporary Valor is spent before permanent Valor', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'New Company' }).click();
+  await page.getByRole('button', { name: 'Begin Journey' }).click();
+  await page.waitForFunction(() => Boolean((window as any).__GAME_TEST_API__));
+  await page.evaluate(() => (window as any).__GAME_TEST_API__.triggerEncounter('bandit-1'));
+  await page.getByRole('button', { name: 'Fight' }).click();
+  await page.evaluate(() => (window as any).__GAME_TEST_API__.selectFirstPlayer());
+  await page.evaluate(() => (window as any).__GAME_TEST_API__.grantTempValor(1));
+
+  const before:any = await page.evaluate(() => (window as any).__GAME_TEST_API__.battleSnapshot());
+  expect(before.tempValor).toBe(1);
+  const permanent = before.permanentValor;
+
+  await page.getByRole('button', { name: /Rally/ }).click();
+  const after:any = await page.evaluate(() => (window as any).__GAME_TEST_API__.battleSnapshot());
+  expect(after.tempValor).toBe(0);
+  expect(after.permanentValor).toBe(permanent);
+});
