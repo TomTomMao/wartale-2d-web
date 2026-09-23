@@ -4,6 +4,7 @@ export type ItemSlot = 'weapon' | 'armor' | 'helmet' | 'accessory';
 export type QuestState = 'available' | 'active' | 'completed';
 export type Profession = 'Tinkerer' | 'Blacksmith' | 'Cook' | 'Alchemist' | 'Miner' | 'Scholar' | 'Thief';
 export type CampFacility = 'Campfire' | 'Tent' | 'Workshop' | 'Cooking Pot' | 'Lectern' | 'Strategy Table' | 'Training Dummy' | 'Stocks';
+export type ValorStyle = 'Engagement' | 'Victory' | 'Support';
 
 export interface Item {
   id: string;
@@ -59,6 +60,7 @@ export interface Mercenary {
   relations: Record<string, number>;
   injury?: string;
   appearanceVariant: number;
+  valorStyle: ValorStyle;
 }
 
 export interface Quest {
@@ -181,4 +183,5 @@ export interface BattleUnit {
   facing?: 1 | -1;
   engagedWithId?: string;
   statuses?: string[];
+  valorTriggeredThisTurn?: boolean;
 }
