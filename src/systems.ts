@@ -1,4 +1,4 @@
-import type { CampFacility, GameState, Item, Profession } from './types';
+import type { CampFacility, GameState, Item, PathName, Profession } from './types';
 
 const professionThresholds = [0, 30, 90, 220, 500];
 
@@ -23,6 +23,14 @@ export function ensureCoreSystems(state: GameState): GameState {
   ];
   state.tradeGoods ??= { wool: 0, salt: 0, spice: 0 };
   state.materials ??= { iron: 4, leather: 4, wood: 5, herbs: 3, cloth: 2 };
+  state.ropes ??= 3;
+  state.animals ??= [];
+  state.paths ??= {
+    'Power and Glory': { xp: 0, level: 1, points: 0 },
+    'Trade and Craftsmanship': { xp: 0, level: 1, points: 0 },
+    'Crime and Chaos': { xp: 0, level: 1, points: 0 },
+    'Mysteries and Wisdom': { xp: 0, level: 1, points: 0 }
+  };
   for (const m of state.mercenaries) {
     m.relations ??= {};
     m.learnedSkills ??= [];
@@ -75,6 +83,7 @@ export function workProfession(state: GameState, mercId: string): string {
   if (!merc?.profession) return 'Assign a profession first.';
   const p = merc.profession;
   p.xp += 25;
+  awardPathXp(state, 'Trade and Craftsmanship', 5);
   if (p.level < 5 && p.xp >= professionThresholds[p.level]) p.level += 1;
   gainKnowledge(state, 12);
   switch (p.name) {
@@ -98,6 +107,7 @@ export function commitCrime(state: GameState, severity: number): void {
   ensureCoreSystems(state);
   state.suspicion = Math.min(500, state.suspicion + severity);
   state.wantedLevel = Math.min(5, Math.ceil(state.suspicion / 100));
+  awardPathXp(state, 'Crime and Chaos', Math.max(2, Math.round(severity / 10)));
 }
 
 export function layLow(state: GameState, amount = 35): void {
@@ -163,6 +173,7 @@ export function buyTradeGood(state: GameState, good: string): boolean {
   if (state.crowns < price) return false;
   state.crowns -= price;
   state.tradeGoods[good] = (state.tradeGoods[good] ?? 0) + 1;
+  awardPathXp(state, 'Trade and Craftsmanship', 3);
   return true;
 }
 
@@ -172,6 +183,7 @@ export function sellTradeGood(state: GameState, good: string): number {
   const price = Math.round(tradePrice(state.currentRegion, good) * 1.12);
   state.tradeGoods[good] -= 1;
   state.crowns += price;
+  awardPathXp(state, 'Trade and Craftsmanship', 5);
   return price;
 }
 
@@ -196,6 +208,7 @@ export function changeRelationship(state: GameState, aId: string, bId: string, a
   if (!a || !b || a.id === b.id) return;
   a.relations[b.id] = Math.max(-100, Math.min(100, (a.relations[b.id] ?? 0) + amount));
   b.relations[a.id] = Math.max(-100, Math.min(100, (b.relations[a.id] ?? 0) + amount));
+  if (amount > 0) awardPathXp(state, 'Power and Glory', 2);
 }
 
 export function exploreTomb(state: GameState, tombId: string): { ok: boolean; message: string } {
@@ -206,6 +219,7 @@ export function exploreTomb(state: GameState, tombId: string): { ok: boolean; me
   if (state.torches <= 0) return { ok: false, message: 'You need more torches.' };
   state.torches -= 1;
   tomb.roomsExplored += 1;
+  awardPathXp(state, 'Mysteries and Wisdom', 6);
   gainKnowledge(state, 18);
   if (tomb.roomsExplored % 2 === 0 && tomb.codices < 3) tomb.codices += 1;
   if (tomb.roomsExplored >= tomb.totalRooms) {
@@ -316,4 +330,40 @@ export function personalityFoodCost(state: GameState): number {
 
 export function wageTotal(state: GameState): number {
   return state.mercenaries.reduce((n,m)=>n + Math.round(m.wage * (m.traits.includes('Greedy') ? 1.15 : 1)),0);
+}
+
+
+export function awardPathXp(state: GameState, path: PathName, amount: number): void {
+  ensureCoreSystems(state);
+  const p = state.paths[path];
+  p.xp += amount;
+  while (p.level < 12 && p.xp >= p.level * 60) {
+    p.xp -= p.level * 60;
+    p.level += 1;
+    p.points += 1;
+  }
+}
+
+export function captureAnimal(state: GameState, species: 'Wolf' = 'Wolf'): boolean {
+  ensureCoreSystems(state);
+  if (state.ropes < 1 || state.animals.length >= 3) return false;
+  state.ropes -= 1;
+  state.animals.push({
+    id: `animal-${Date.now()}-${state.animals.length}`,
+    name: `${species} Companion ${state.animals.length + 1}`,
+    species,
+    health: 24,
+    maxHealth: 24,
+    power: 7,
+    movement: 170
+  });
+  awardPathXp(state, 'Mysteries and Wisdom', 8);
+  return true;
+}
+
+export function buyRope(state: GameState, cost = 8): boolean {
+  if (state.crowns < cost) return false;
+  state.crowns -= cost;
+  state.ropes += 1;
+  return true;
 }
