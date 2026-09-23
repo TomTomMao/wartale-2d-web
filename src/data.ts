@@ -11,7 +11,10 @@ export const LOCATIONS = [
   { id: 'emberford', name: 'Emberford', type: 'town', x: 2150, y: 1180, region: 'Ashen Hills' },
   { id: 'ruined-keep', name: 'Ruined Keep', type: 'hostile', x: 2440, y: 780, region: 'Ashen Hills' },
   { id: 'northwatch', name: 'Northwatch', type: 'town', x: 2700, y: 1720, region: 'Frostmere' },
-  { id: 'old-battlefield', name: 'Old Battlefield', type: 'hostile', x: 2350, y: 1760, region: 'Frostmere' }
+  { id: 'old-battlefield', name: 'Old Battlefield', type: 'hostile', x: 2350, y: 1760, region: 'Frostmere' },
+  { id: 'greenmarch-tomb', name: 'Mossbound Barrow', type: 'poi', x: 1420, y: 1370, region: 'Greenmarch' },
+  { id: 'ashen-tomb', name: 'Cinder Vault', type: 'poi', x: 2050, y: 650, region: 'Ashen Hills' },
+  { id: 'frost-tomb', name: 'White Crypt', type: 'poi', x: 2870, y: 1370, region: 'Frostmere' }
 ] as const;
 
 export const CLASS_STATS: Record<MercClass, { hp: number; armor: number; str: number; dex: number; move: number; crit: number; wage: number }> = {
@@ -23,8 +26,8 @@ export const CLASS_STATS: Record<MercClass, { hp: number; armor: number; str: nu
 };
 
 export const ITEMS: Record<string, Item> = {
-  rustySword: { id: 'rusty-sword', name: 'Rusty Sword', slot: 'weapon', rarity: 'Common', value: 18, power: 3, durability: 30, maxDurability: 30 },
-  militiaSword: { id: 'militia-sword', name: 'Militia Sword', slot: 'weapon', rarity: 'Uncommon', value: 48, power: 6, durability: 45, maxDurability: 45 },
+  rustySword: { id: 'rusty-sword', name: 'Rusty Sword', slot: 'weapon', rarity: 'Common', value: 18, power: 3, durability: 30, maxDurability: 30, weight: 2 },
+  militiaSword: { id: 'militia-sword', name: 'Militia Sword', slot: 'weapon', rarity: 'Uncommon', value: 48, power: 6, durability: 45, maxDurability: 45, weight: 2.5 },
   hunterBow: { id: 'hunter-bow', name: 'Hunter Bow', slot: 'weapon', rarity: 'Uncommon', value: 52, power: 5, durability: 40, maxDurability: 40 },
   raiderAxe: { id: 'raider-axe', name: 'Raider Axe', slot: 'weapon', rarity: 'Rare', value: 86, power: 8, durability: 50, maxDurability: 50 },
   leatherArmor: { id: 'leather-armor', name: 'Leather Armor', slot: 'armor', rarity: 'Common', value: 30, armor: 5, durability: 40, maxDurability: 40 },
