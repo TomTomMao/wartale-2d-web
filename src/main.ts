@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import './style.css';
 import { GameScene } from './game';
-import { acceptQuest, buyFood, equipItem, recruit, repairAll, rest, sellItem, totalAttack, turnInQuest } from './domain';
+import { acceptQuest, buyFood, canEquipItem, equipItem, recruit, repairAll, rest, sellItem, totalAttack, turnInQuest } from './domain';
 import { getState, hasSave, loadGame, resetSave, saveGame, startNewGame } from './store';
 import {
   applyOrigin, applyPoisonOil, assignProfession, availableSkills, availableSpecializations, buildCampFacility, buyPony, buyRope, buyTradeGood, captureAnimal, capturePrisoner,
@@ -177,7 +177,18 @@ function showInventory(): void {
       <span>Relations: ${relation || 'No bonds yet'}</span>
     </div>`;
   }).join('');
-  const items = s.inventory.map((i, idx) => `<div class="item-row rarity-${i.rarity.toLowerCase()}"><div><strong>${i.name}</strong><span>${i.rarity}${i.power ? ` · +${i.power} power` : ''}${i.armor ? ` · +${i.armor} armor` : ''} · ${i.weight ?? 1} wt</span></div><div>${i.slot ? `<button class="mini" data-action="equip" data-item-index="${idx}">Equip on ${s.mercenaries[0].name}</button>` : ''}<button class="mini" data-action="sell" data-item-index="${idx}">Sell ${Math.floor(i.value * .55)}</button></div></div>`).join('') || '<p>Inventory empty.</p>';
+  const items = s.inventory.map(i => {
+    const compatible = i.slot ? s.mercenaries.filter(m => canEquipItem(m, i)) : [];
+    const equipButtons = i.slot
+      ? (compatible.length
+          ? compatible.map(m => `<button class="mini equip-person" data-action="equip" data-item-id="${i.id}" data-merc="${m.id}">Equip → ${m.name}</button>`).join('')
+          : '<span class="muted">No compatible mercenary</span>')
+      : '';
+    return `<div class="item-row rarity-${i.rarity.toLowerCase()}">
+      <div><strong>${i.name}</strong><span>${i.rarity}${i.power ? ` · +${i.power} power` : ''}${i.armor ? ` · +${i.armor} armor` : ''} · ${i.weight ?? 1} wt</span></div>
+      <div class="item-actions"><div class="equip-targets">${equipButtons}</div><button class="mini" data-action="sell" data-item-id="${i.id}">Sell ${Math.floor(i.value * .55)}</button></div>
+    </div>`;
+  }).join('') || '<p>Inventory empty.</p>';
   modal.innerHTML = `<div class="panel wide" data-testid="inventory-panel"><header><h2>Company · ${inventoryWeight(s).toFixed(1)}/${carryingCapacity(s)} weight</h2><button class="x" data-action="close">×</button></header><div class="two-col"><section><h3>Mercenaries & Professions</h3>${mercs}</section><section><h3>Pack</h3>${items}</section></div></div>`;
 }
 
@@ -388,12 +399,18 @@ document.addEventListener('click', (e) => {
   else if (action === 'steal') { commitCrime(s,85); s.food+=6; saveGame(); showToast('You stole provisions. Suspicion increased sharply.'); showTown(currentTownName); }
   else if (action === 'turn-prisoner') { const reward=turnInPrisoner(s,target.dataset.prisoner!); saveGame(); showToast(reward?`Bounty paid: ${reward} crowns.`:'Prisoner unavailable.'); showTown(currentTownName); }
   else if (action === 'equip') {
-    const idx = Number(target.dataset.itemIndex); const item = s.inventory[idx];
-    if (item && equipItem(s, s.mercenaries[0].id, item.id)) { saveGame(); showToast(`${item.name} equipped.`); }
+    const item = s.inventory.find(i => i.id === target.dataset.itemId);
+    const merc = s.mercenaries.find(m => m.id === target.dataset.merc);
+    if (item && merc && equipItem(s, merc.id, item.id)) {
+      saveGame();
+      showToast(`${item.name} equipped on ${merc.name}.`);
+    } else {
+      showToast('That mercenary cannot equip this item.');
+    }
     showInventory(); renderWorldHud();
   }
   else if (action === 'sell') {
-    const idx=Number(target.dataset.itemIndex); const item=s.inventory[idx];
+    const item=s.inventory.find(i => i.id === target.dataset.itemId);
     if(item){const earned=sellItem(s,item.id);saveGame();showToast(`Sold ${item.name} for ${earned} crowns.`);}
     showInventory(); renderWorldHud();
   }
