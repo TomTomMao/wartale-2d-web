@@ -3,7 +3,7 @@ export type ItemRarity = 'Common' | 'Uncommon' | 'Rare' | 'Epic' | 'Legendary';
 export type ItemSlot = 'weapon' | 'armor' | 'helmet' | 'accessory';
 export type QuestState = 'available' | 'active' | 'completed';
 export type Profession = 'Tinkerer' | 'Blacksmith' | 'Cook' | 'Alchemist' | 'Miner' | 'Scholar' | 'Thief';
-export type CampFacility = 'Campfire' | 'Tent' | 'Workshop' | 'Cooking Pot' | 'Lectern' | 'Strategy Table';
+export type CampFacility = 'Campfire' | 'Tent' | 'Workshop' | 'Cooking Pot' | 'Lectern' | 'Strategy Table' | 'Training Dummy' | 'Stocks';
 
 export interface Item {
   id: string;
@@ -133,6 +133,9 @@ export interface GameState {
   enemies: WorldEnemy[];
   currentRegion: string;
   difficulty: 'Easy' | 'Normal' | 'Hard';
+  explorationMode: 'Adaptive' | 'Region Locked';
+  permadeath: boolean;
+  influence: number;
 
   fatigue: number;
   maxFatigue: number;
