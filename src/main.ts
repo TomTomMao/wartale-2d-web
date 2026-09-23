@@ -4,7 +4,7 @@ import { GameScene } from './game';
 import { acceptQuest, buyFood, equipItem, recruit, repairAll, rest, sellItem, totalAttack, turnInQuest } from './domain';
 import { getState, hasSave, loadGame, resetSave, saveGame, startNewGame } from './store';
 import {
-  assignProfession, availableSkills, availableSpecializations, buildCampFacility, buyPony, buyTradeGood, capturePrisoner,
+  assignProfession, availableSkills, availableSpecializations, buildCampFacility, buyPony, buyRope, buyTradeGood, captureAnimal, capturePrisoner,
   carryingCapacity, changeRelationship, commitCrime, craftRecipe, ensureCoreSystems, exploreTomb,
   healInjury, inventoryWeight, layLow, learnSkill, sellTradeGood, specializeMercenary, tradePrice,
   turnInPrisoner, unlockKnowledge, workProfession
@@ -156,8 +156,11 @@ function showInventory(): void {
 
 function showKnowledge(): void {
   const s = ensureCoreSystems(getState());
-  modal.innerHTML = `<div class="panel" data-testid="knowledge-panel"><header><h2>Knowledge</h2><button class="x" data-action="close">×</button></header>
-    <p>Progress: ${s.knowledge}/100 · Knowledge Points: <strong>${s.knowledgePoints}</strong></p>
+  modal.innerHTML = `<div class="panel wide" data-testid="knowledge-panel"><header><h2>Knowledge & Paths</h2><button class="x" data-action="close">×</button></header>
+    <p>Compendium: ${s.knowledge}/100 · Knowledge Points: <strong>${s.knowledgePoints}</strong></p>
+    <div class="town-grid">
+      ${Object.entries(s.paths).map(([name,p])=>`<div class="service"><h3>${name}</h3><p>Level ${p.level} · ${p.xp}/${p.level*60} XP · Path Points ${p.points}</p></div>`).join('')}
+    </div>
     ${knowledgeNodes.map(([key,label])=>`<div class="quest-card"><strong>${label}</strong><div>${s.unlockedKnowledge.includes(key) ? 'UNLOCKED' : button('Unlock (1 KP)', 'unlock-knowledge', '', `data-key="${key}"`)}</div></div>`).join('')}
   </div>`;
 }
@@ -174,7 +177,8 @@ function showCamp(): void {
   const build = facilities.filter(f=>!s.campFacilities.includes(f)).map(f => button(`Build ${f}`, 'build-facility', '', `data-facility="${f}"`)).join('');
   modal.innerHTML = `<div class="panel camp-panel wide" data-testid="camp-panel"><header><h2>Company Camp</h2><button class="x" data-action="close">×</button></header>
     <div class="camp-art"><div class="fire">🔥</div>${s.mercenaries.slice(0,6).map((m,i)=>`<div class="camper c${i}">◆<span>${m.name}</span></div>`).join('')}</div>
-    <p>Fatigue <strong>${Math.round(s.fatigue)}/${s.maxFatigue}</strong> · Valor <strong>${s.valor}/${s.maxValor}</strong>. Rest costs <strong>${s.mercenaries.length * 2} food</strong>; wages <strong>${wages}</strong> every third rest.</p>
+    <p>Fatigue <strong>${Math.round(s.fatigue)}/${s.maxFatigue}</strong> · Valor <strong>${s.valor}/${s.maxValor}</strong>. Rest costs <strong>${s.mercenaries.length * 2 + s.animals.length * 4} food</strong>; wages <strong>${wages}</strong> every third rest.</p>
+    <p>Animals: ${s.animals.map(a=>`${a.name} HP ${a.health}/${a.maxHealth}`).join(', ') || 'None'} · Ropes: ${s.ropes}</p>
     <p>Facilities: ${s.campFacilities.join(', ')}</p>
     <p>Materials: Iron ${s.materials.iron ?? 0} · Leather ${s.materials.leather ?? 0} · Wood ${s.materials.wood ?? 0} · Herbs ${s.materials.herbs ?? 0} · Cloth ${s.materials.cloth ?? 0} · Torches ${s.torches}</p>
     <div class="row">${button('Rest until morning', 'rest', 'primary')}${build}${s.mercenaries.length>1?button('Share a meal / Socialise','socialise'):''}${s.wantedLevel?button('Lay Low','lay-low'):''}</div>
@@ -191,7 +195,7 @@ function showTown(name: string): void {
   const prisoners = s.prisoners.map(p=>`<button class="mini" data-action="turn-prisoner" data-prisoner="${p.id}">Turn in ${p.name} (+${p.bounty})</button>`).join('') || '<span class="muted">No prisoners.</span>';
   modal.innerHTML = `<div class="panel wide town-panel" data-testid="town-panel"><header><div><small>Settlement · ${s.currentRegion}</small><h2>${name}</h2></div><button class="x" data-action="close">×</button></header>
     <div class="town-grid">
-      <div class="service"><h3>🍺 Tavern</h3><p>Recruit mercenaries and buy a pack pony.</p>${button('Recruit Kestrel', 'recruit')}${button('Buy Pack Pony (90)', 'buy-pony')}</div>
+      <div class="service"><h3>🍺 Tavern & Stable</h3><p>Recruit mercenaries, buy pack animals and rope.</p>${button('Recruit Kestrel', 'recruit')}${button('Buy Pack Pony (90)', 'buy-pony')}${button('Buy Rope (8)', 'buy-rope')}</div>
       <div class="service"><h3>⚒ Blacksmith</h3><p>Repair company equipment.</p>${button('Repair all', 'repair')}</div>
       <div class="service"><h3>🧺 Market & Trade</h3><p>6 food for 12 crowns. Regional prices create caravan opportunities.</p>${button('Buy provisions', 'buy-food')}${trade}${button('Steal supplies', 'steal', 'danger')}</div>
       <div class="service"><h3>📜 Contract Board</h3><p>${q.name} — ${q.state}</p>${q.state==='available' ? button('Accept contract','accept-town-quest') : q.state==='active'&&q.progress>=q.required ? button('Claim reward','turn-in-town-quest','primary') : '<span class="muted">Return after defeating the target.</span>'}</div>
@@ -215,7 +219,9 @@ function showEncounter(enemy: { id: string; kind: string; strength: number }): v
 
 function showVictory(detail: any): void {
   currentVictoryKind = detail.enemyKind ?? null;
-  const capture = currentVictoryKind && currentVictoryKind !== 'wolf' ? button('Capture a survivor', 'capture-prisoner') : '';
+  const capture = currentVictoryKind === 'wolf'
+    ? button('Capture Wolf (1 rope)', 'capture-animal')
+    : currentVictoryKind ? button('Capture a survivor', 'capture-prisoner') : '';
   modal.innerHTML = `<div class="panel victory" data-testid="victory-panel"><div class="crest">✦</div><h2>Victory</h2><p>Your company controls the field.</p><p><strong>Loot:</strong> ${detail.crowns} crowns · ${detail.items.join(', ') || 'supplies'}</p><div class="row">${capture}${button('Take all and continue', 'continue-battle', 'primary')}</div></div>`;
 }
 
@@ -285,6 +291,10 @@ document.addEventListener('click', (e) => {
     if (currentVictoryKind && currentVictoryKind !== 'wolf') showToast(capturePrisoner(s,currentVictoryKind) ? 'Prisoner captured. Turn them in at a watch house.' : 'No room for another prisoner.');
     saveGame(); showVictory({crowns:0,items:['already collected'],enemyKind:null});
   }
+  else if (action === 'capture-animal') {
+    showToast(captureAnimal(s,'Wolf') ? 'Wolf captured. It will fight with the company in future battles.' : 'You need rope or have too many animals.');
+    saveGame(); showVictory({crowns:0,items:['already collected'],enemyKind:null});
+  }
   else if (action === 'rest') {
     const result = rest(s);
     if (!result.ok) showToast('Not enough food to rest.');
@@ -326,6 +336,7 @@ document.addEventListener('click', (e) => {
   else if (action === 'buy-food') { showToast(buyFood(s) ? 'Bought provisions.' : 'Not enough crowns.'); saveGame(); showTown(currentTownName); }
   else if (action === 'recruit') { showToast(recruit(s) ? 'Kestrel joined the company.' : 'Cannot recruit right now.'); saveGame(); showTown(currentTownName); }
   else if (action === 'buy-pony') { showToast(buyPony(s) ? 'A pack pony joined the caravan.' : 'Cannot buy a pony.'); saveGame(); showTown(currentTownName); }
+  else if (action === 'buy-rope') { showToast(buyRope(s) ? 'Bought rope.' : 'Not enough crowns.'); saveGame(); showTown(currentTownName); }
   else if (action === 'repair') { const cost=repairAll(s); showToast(cost<0?'Not enough crowns.':`Equipment repaired for ${cost} crowns.`); saveGame(); showTown(currentTownName); }
   else if (action === 'buy-trade') { showToast(buyTradeGood(s,target.dataset.good!) ? 'Trade good purchased.' : 'Not enough crowns.'); saveGame(); showTown(currentTownName); }
   else if (action === 'sell-trade') { const earned=sellTradeGood(s,target.dataset.good!); showToast(earned?`Sold for ${earned} crowns.`:'Nothing to sell.'); saveGame(); showTown(currentTownName); }
