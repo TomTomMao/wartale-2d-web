@@ -266,6 +266,7 @@ function exposeTestApi(): void {
     moveSelectedTo: (col:number,row:number) => scene?.testMoveSelectedTo(col,row),
     killFirstEnemy: () => scene?.testKillFirstEnemy(),
     grantTempValor: (amount=1) => scene?.testGrantTempValor(amount),
+    isCellBlocked: (col:number,row:number) => scene?.testIsCellBlocked(col,row),
     save: () => saveGame(),
     resetSave: () => { resetSave(); location.reload(); }
   };
