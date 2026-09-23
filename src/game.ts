@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import { LOCATIONS, WORLD_HEIGHT, WORLD_WIDTH } from './data';
-import { applyDamage, enemyBattleUnits, generateLoot, mercToBattleUnit, recordKill } from './domain';
+import { animalToBattleUnit, applyDamage, enemyBattleUnits, generateLoot, mercToBattleUnit, recordKill } from './domain';
 import { getState, saveGame } from './store';
-import { inflictInjury, travelStep } from './systems';
+import { awardPathXp, inflictInjury, travelStep } from './systems';
 import type { BattleUnit, MercClass, WorldEnemy } from './types';
 import {
   createPixelLocation,
@@ -272,7 +272,9 @@ export class GameScene extends Phaser.Scene {
     drawPixelRock(this, w * 0.42, h - 230, 5).setDepth(-3);
     drawPixelRock(this, w * 0.64, 180, 4).setDepth(-3);
 
-    this.battleUnits = getState().mercenaries.slice(0, 6).map((m, i) => mercToBattleUnit(m, 180 + (i % 2) * 85, 220 + Math.floor(i / 2) * 105));
+    const state = getState();
+    this.battleUnits = state.mercenaries.slice(0, 6).map((m, i) => mercToBattleUnit(m, 180 + (i % 2) * 85, 220 + Math.floor(i / 2) * 105));
+    this.battleUnits.push(...state.animals.slice(0, 2).map((a, i) => animalToBattleUnit(a, 120, 500 + i * 70)));
     this.battleUnits.push(...enemyBattleUnits(enemy.kind, enemy.strength));
     this.round = 1;
     for (const unit of this.battleUnits) this.createBattleUnitSprite(unit);
@@ -292,8 +294,11 @@ export class GameScene extends Phaser.Scene {
   private createBattleUnitSprite(unit: BattleUnit): void {
     let kind: ActorKind;
     if (unit.side === 'player') {
-      const merc = getState().mercenaries.find(m => m.id === unit.mercenaryId);
-      kind = classToKind(merc?.class ?? 'Swordsman');
+      if (unit.animalId) kind = 'wolf';
+      else {
+        const merc = getState().mercenaries.find(m => m.id === unit.mercenaryId);
+        kind = classToKind(merc?.class ?? 'Swordsman');
+      }
     } else {
       kind = this.encounterEnemy?.kind === 'wolf' ? 'wolf' : this.encounterEnemy?.kind === 'raider' ? 'raider' : 'bandit';
     }
@@ -554,7 +559,15 @@ export class GameScene extends Phaser.Scene {
         const state = getState();
         state.crowns += loot.crowns;
         state.inventory.push(...loot.items);
+        if (e.kind === 'wolf') {
+          state.materials.leather = (state.materials.leather ?? 0) + 2;
+          state.materials.herbs = (state.materials.herbs ?? 0) + 1;
+        } else {
+          state.materials.iron = (state.materials.iron ?? 0) + 1;
+          state.materials.cloth = (state.materials.cloth ?? 0) + 1;
+        }
         recordKill(state, e.kind);
+        awardPathXp(state, 'Power and Glory', 8);
         saveGame();
         this.emit({ type: 'victory', crowns: loot.crowns, items: loot.items.map(i => i.name), enemyKind: e.kind });
       }
@@ -574,9 +587,15 @@ export class GameScene extends Phaser.Scene {
 
   private syncBattleBackToState(): void {
     const state = getState();
-    for (const bu of this.battleUnits.filter(u => u.side === 'player' && u.mercenaryId)) {
-      const m = state.mercenaries.find(m => m.id === bu.mercenaryId);
-      if (m) { m.health = Math.max(1, bu.health); m.armor = Math.max(0, bu.armor); }
+    for (const bu of this.battleUnits.filter(u => u.side === 'player')) {
+      if (bu.mercenaryId) {
+        const m = state.mercenaries.find(m => m.id === bu.mercenaryId);
+        if (m) { m.health = Math.max(1, bu.health); m.armor = Math.max(0, bu.armor); }
+      }
+      if (bu.animalId) {
+        const a = state.animals.find(a => a.id === bu.animalId);
+        if (a) a.health = Math.max(1, bu.health);
+      }
     }
   }
 
