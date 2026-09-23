@@ -44,6 +44,7 @@ export function ensureCoreSystems(state: GameState): GameState {
     m.relations ??= {};
     m.learnedSkills ??= [];
     m.skillPoints ??= 0;
+    m.appearanceVariant ??= 0;
   }
   return state;
 }
