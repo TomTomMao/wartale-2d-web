@@ -52,6 +52,9 @@ export interface Mercenary {
   traits: string[];
   equipment: Equipment;
   profession?: ProfessionProgress;
+  specialization?: string;
+  learnedSkills: string[];
+  skillPoints: number;
   relations: Record<string, number>;
   injury?: string;
 }
@@ -133,6 +136,7 @@ export interface GameState {
   torches: number;
   tombs: TombProgress[];
   tradeGoods: Record<string, number>;
+  materials: Record<string, number>;
 }
 
 export interface BattleUnit {
