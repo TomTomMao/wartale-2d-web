@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { LOCATIONS, WORLD_HEIGHT, WORLD_WIDTH } from './data';
 import { applyDamage, enemyBattleUnits, generateLoot, mercToBattleUnit, recordKill } from './domain';
 import { getState, saveGame } from './store';
+import { travelStep } from './systems';
 import type { BattleUnit, MercClass, WorldEnemy } from './types';
 import {
   createPixelLocation,
@@ -119,6 +120,7 @@ export class GameScene extends Phaser.Scene {
       const state = getState();
       const dist = Phaser.Math.Distance.Between(state.worldX, state.worldY, loc.x, loc.y);
       if (town && dist < 150) this.emit({ type: 'town', townId: loc.id, townName: loc.name });
+      else if (loc.id.includes('tomb') && dist < 170) this.emit({ type: 'tomb', tombId: loc.id, tombName: loc.name });
       else this.emit({ type: 'toast', message: dist < 180 ? `${loc.name} explored.` : `Move closer to ${loc.name}.` });
     });
   }
@@ -150,8 +152,10 @@ export class GameScene extends Phaser.Scene {
     if (dx || dy) {
       partyMoving = true;
       const len = Math.hypot(dx, dy);
-      state.worldX += dx / len * speed * delta / 1000;
-      state.worldY += dy / len * speed * delta / 1000;
+      const step = speed * delta / 1000;
+      state.worldX += dx / len * step;
+      state.worldY += dy / len * step;
+      travelStep(state, step);
       this.moveTarget = undefined;
     } else if (this.moveTarget) {
       partyMoving = true;
@@ -163,10 +167,12 @@ export class GameScene extends Phaser.Scene {
         const step = Math.min(d, speed * delta / 1000);
         state.worldX += vx / d * step;
         state.worldY += vy / d * step;
+        travelStep(state, step);
       }
     }
     state.worldX = Phaser.Math.Clamp(state.worldX, 30, WORLD_WIDTH - 30);
     state.worldY = Phaser.Math.Clamp(state.worldY, 30, WORLD_HEIGHT - 30);
+    state.currentRegion = state.worldX < 1700 ? 'Greenmarch' : state.worldX < 2350 ? 'Ashen Hills' : 'Frostmere';
     this.party.setPosition(state.worldX, state.worldY);
     for (const child of this.party.list) {
       if (child instanceof Phaser.GameObjects.Sprite) setWalk(child, partyMoving);
@@ -399,6 +405,22 @@ export class GameScene extends Phaser.Scene {
     this.afterPlayerAction();
   }
 
+  valorSkillSelected(): void {
+    const state = getState();
+    const selected = this.battleUnits.find(u => u.id === this.selectedUnitId && u.side === 'player' && u.health > 0 && !u.acted);
+    if (!selected) return;
+    if (state.valor <= 0) {
+      this.showBattleMessage('No Valor points available.');
+      return;
+    }
+    state.valor -= 1;
+    selected.armor = Math.min(selected.maxArmor + 6, selected.armor + 5);
+    selected.power += 2;
+    this.updateBattleSprite(selected);
+    this.showBattleMessage(`${selected.name} spends 1 Valor: +5 armor and +2 power this battle.`);
+    this.refreshBattleHud();
+  }
+
   guardSelectedUnit(): void {
     const selected = this.battleUnits.find(u => u.id === this.selectedUnitId && u.side === 'player' && u.health > 0 && !u.acted);
     if (!selected) return;
@@ -490,7 +512,7 @@ export class GameScene extends Phaser.Scene {
         state.inventory.push(...loot.items);
         recordKill(state, e.kind);
         saveGame();
-        this.emit({ type: 'victory', crowns: loot.crowns, items: loot.items.map(i => i.name) });
+        this.emit({ type: 'victory', crowns: loot.crowns, items: loot.items.map(i => i.name), enemyKind: e.kind });
       }
       return true;
     }
@@ -518,7 +540,7 @@ export class GameScene extends Phaser.Scene {
   private refreshBattleHud(): void {
     const selected = this.battleUnits.find(u => u.id === this.selectedUnitId);
     const enemies = this.battleUnits.filter(u => u.side === 'enemy' && u.health > 0).length;
-    this.emit({ type: 'battleHud', round: this.round, enemies, selected: selected ? { name: selected.name, health: selected.health, armor: selected.armor, moved: selected.moved, acted: selected.acted } : null });
+    this.emit({ type: 'battleHud', round: this.round, enemies, valor: getState().valor, selected: selected ? { name: selected.name, health: selected.health, armor: selected.armor, moved: selected.moved, acted: selected.acted } : null });
     for (const [id, sprite] of this.battleSprites.entries()) {
       const u = this.battleUnits.find(u => u.id === id);
       if (u?.side === 'player' && u.health > 0) sprite.setScale(id === this.selectedUnitId ? 1.15 : 1);
