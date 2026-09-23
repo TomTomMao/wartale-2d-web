@@ -4,9 +4,9 @@ import { GameScene } from './game';
 import { acceptQuest, buyFood, equipItem, recruit, repairAll, rest, sellItem, totalAttack, turnInQuest } from './domain';
 import { getState, hasSave, loadGame, resetSave, saveGame, startNewGame } from './store';
 import {
-  assignProfession, availableSkills, availableSpecializations, buildCampFacility, buyPony, buyRope, buyTradeGood, captureAnimal, capturePrisoner,
+  applyOrigin, applyPoisonOil, assignProfession, availableSkills, availableSpecializations, buildCampFacility, buyPony, buyRope, buyTradeGood, captureAnimal, capturePrisoner,
   carryingCapacity, changeRelationship, commitCrime, craftRecipe, ensureCoreSystems, exploreTomb,
-  healInjury, inventoryWeight, layLow, learnSkill, sellTradeGood, specializeMercenary, tradePrice,
+  cycleAppearance, healInjury, inventoryWeight, layLow, learnSkill, sellTradeGood, specializeMercenary, tradePrice,
   turnInPrisoner, unlockKnowledge, workProfession
 } from './systems';
 import type { CampFacility, GameState, MercClass, Profession } from './types';
@@ -122,6 +122,7 @@ function showNewGame(): void {
       <h2>Found a Mercenary Company</h2>
       <label>Company name<input id="company-name" value="Iron Wolves" maxlength="28" /></label>
       <label>Starting leader<select id="leader-class"><option>Swordsman</option><option>Warrior</option><option>Ranger</option></select></label>
+      <label>Background<select id="origin"><option selected>Wandering Friends</option><option>Disgraced Guards</option><option>Road Traders</option></select></label>
       <label>Difficulty<select id="difficulty"><option>Easy</option><option selected>Normal</option><option>Hard</option></select></label>
       <label>Exploration<select id="exploration-mode"><option selected>Adaptive</option><option>Region Locked</option></select></label>
       <label>Permadeath<select id="permadeath"><option value="off" selected>Off</option><option value="on">On</option></select></label>
@@ -148,6 +149,9 @@ function showInventory(): void {
       <span>Skills: ${m.learnedSkills.join(', ') || 'None'} · Skill Points: ${m.skillPoints}</span>
       <div>${m.skillPoints>0 ? availableSkills(m.class).filter(sk=>!m.learnedSkills.includes(sk)).map(sk=>`<button class="mini" data-action="learn-skill" data-merc="${m.id}" data-skill="${sk}">${sk}</button>`).join('') : ''}</div>
       <span>Traits: ${m.traits.join(', ') || 'None'} ${m.injury ? `· Injury: ${m.injury}` : ''}</span>
+      <span>Appearance Variant: ${m.appearanceVariant ?? 0} · Weapon Oil: ${m.weaponOil ?? 'None'}</span>
+      <div><button class="mini" data-action="cycle-appearance" data-merc="${m.id}">Change Look</button>
+      ${s.inventory.some(i=>i.name==='Poison Oil') && m.equipment.weapon ? `<button class="mini" data-action="apply-oil" data-merc="${m.id}">Apply Poison Oil</button>` : ''}</div>
       ${m.injury ? `<button class="mini" data-action="heal-injury" data-merc="${m.id}">Use Medicine</button>` : ''}
       <span>Relations: ${relation || 'No bonds yet'}</span>
     </div>`;
@@ -185,7 +189,7 @@ function showCamp(): void {
     <p>Materials: Iron ${s.materials.iron ?? 0} · Leather ${s.materials.leather ?? 0} · Wood ${s.materials.wood ?? 0} · Herbs ${s.materials.herbs ?? 0} · Cloth ${s.materials.cloth ?? 0} · Torches ${s.torches}</p>
     <div class="row">${button('Rest until morning', 'rest', 'primary')}${build}${s.mercenaries.length>1?button('Share a meal / Socialise','socialise'):''}${s.wantedLevel?button('Lay Low','lay-low'):''}</div>
     <h3>Crafting</h3>
-    <div class="row">${['Repair Kit','Medicine','Torch','Armor Reinforcement'].map(r=>button(`Craft ${r}`,'craft','',`data-recipe="${r}"`)).join('')}</div>
+    <div class="row">${['Repair Kit','Medicine','Torch','Armor Reinforcement','Poison Oil'].map(r=>button(`Craft ${r}`,'craft','',`data-recipe="${r}"`)).join('')}</div>
   </div>`;
 }
 
@@ -274,10 +278,12 @@ document.addEventListener('click', (e) => {
   else if (action === 'start-game') {
     const company = (document.querySelector<HTMLInputElement>('#company-name')?.value || 'Iron Wolves').trim();
     const cls = document.querySelector<HTMLSelectElement>('#leader-class')!.value as MercClass;
+    const origin = document.querySelector<HTMLSelectElement>('#origin')!.value as GameState['origin'];
     const difficulty = document.querySelector<HTMLSelectElement>('#difficulty')!.value as GameState['difficulty'];
     const explorationMode = document.querySelector<HTMLSelectElement>('#exploration-mode')!.value as GameState['explorationMode'];
     const permadeath = document.querySelector<HTMLSelectElement>('#permadeath')!.value === 'on';
     const state = startNewGame(company, cls, difficulty);
+    applyOrigin(state, origin);
     state.explorationMode = explorationMode;
     state.permadeath = permadeath;
     saveGame();
@@ -325,6 +331,8 @@ document.addEventListener('click', (e) => {
   else if (action === 'specialize') { showToast(specializeMercenary(s,target.dataset.merc!,target.dataset.specialization!) ? 'Specialization chosen.' : 'Cannot specialize yet.'); saveGame(); showInventory(); }
   else if (action === 'learn-skill') { showToast(learnSkill(s,target.dataset.merc!,target.dataset.skill!) ? 'Skill learned.' : 'Cannot learn this skill.'); saveGame(); showInventory(); }
   else if (action === 'heal-injury') { showToast(healInjury(s,target.dataset.merc!) ? 'Injury treated.' : 'Medicine required.'); saveGame(); showInventory(); }
+  else if (action === 'cycle-appearance') { cycleAppearance(s,target.dataset.merc!); saveGame(); showInventory(); showToast('Appearance changed.'); }
+  else if (action === 'apply-oil') { showToast(applyPoisonOil(s,target.dataset.merc!) ? 'Weapon coated with Poison Oil.' : 'Requires a weapon and Poison Oil.'); saveGame(); showInventory(); }
   else if (action === 'craft') { showToast(craftRecipe(s,target.dataset.recipe!) ? `${target.dataset.recipe} crafted.` : 'Missing materials.'); saveGame(); showCamp(); renderWorldHud(); }
   else if (action === 'unlock-knowledge') {
     showToast(unlockKnowledge(s,target.dataset.key!) ? 'Knowledge unlocked.' : 'Not enough Knowledge Points.');
