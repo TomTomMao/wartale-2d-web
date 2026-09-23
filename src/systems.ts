@@ -22,7 +22,12 @@ export function ensureCoreSystems(state: GameState): GameState {
     { id: 'frost-tomb', name: 'White Crypt', roomsExplored: 0, totalRooms: 6, codices: 0, completed: false }
   ];
   state.tradeGoods ??= { wool: 0, salt: 0, spice: 0 };
-  for (const m of state.mercenaries) m.relations ??= {};
+  state.materials ??= { iron: 4, leather: 4, wood: 5, herbs: 3, cloth: 2 };
+  for (const m of state.mercenaries) {
+    m.relations ??= {};
+    m.learnedSkills ??= [];
+    m.skillPoints ??= 0;
+  }
   return state;
 }
 
@@ -220,3 +225,95 @@ export const CORE_PARITY_FEATURES = [
   'prisoners', 'pack-animals', 'regional-trading', 'relationships', 'tombs',
   'camp-upgrades', 'crafting'
 ] as const;
+
+
+const specializations: Record<string, string[]> = {
+  Swordsman: ['Defender','Duelist'],
+  Warrior: ['Berserker','Destroyer'],
+  Ranger: ['Hunter','Marksman'],
+  Spearman: ['Sentinel','Harpooner'],
+  Rogue: ['Assassin','Trickster']
+};
+
+const classSkills: Record<string, string[]> = {
+  Swordsman: ['Riposte','Taunt'],
+  Warrior: ['Heavy Strike','Rage'],
+  Ranger: ['Aimed Shot','Pinning Shot'],
+  Spearman: ['Brace','Long Reach'],
+  Rogue: ['Poison Blade','Dash']
+};
+
+export function availableSpecializations(className: string): string[] {
+  return specializations[className] ?? [];
+}
+
+export function specializeMercenary(state: GameState, mercId: string, specialization: string): boolean {
+  const merc = state.mercenaries.find(m => m.id === mercId);
+  if (!merc || merc.level < 3 || merc.specialization) return false;
+  if (!(specializations[merc.class] ?? []).includes(specialization)) return false;
+  merc.specialization = specialization;
+  merc.maxHealth += specialization === 'Defender' || specialization === 'Sentinel' ? 5 : 0;
+  merc.maxArmor += specialization === 'Defender' ? 3 : 0;
+  return true;
+}
+
+export function learnSkill(state: GameState, mercId: string, skill: string): boolean {
+  const merc = state.mercenaries.find(m => m.id === mercId);
+  if (!merc || merc.skillPoints < 1 || merc.learnedSkills.includes(skill)) return false;
+  if (!(classSkills[merc.class] ?? []).includes(skill)) return false;
+  merc.skillPoints -= 1;
+  merc.learnedSkills.push(skill);
+  return true;
+}
+
+export function availableSkills(className: string): string[] {
+  return classSkills[className] ?? [];
+}
+
+const recipeCosts: Record<string, Record<string, number>> = {
+  'Repair Kit': { iron: 1, wood: 1 },
+  'Medicine': { herbs: 2, cloth: 1 },
+  'Torch': { wood: 1, cloth: 1 },
+  'Armor Reinforcement': { iron: 2, leather: 1 }
+};
+
+export function craftRecipe(state: GameState, recipe: string): boolean {
+  ensureCoreSystems(state);
+  const cost = recipeCosts[recipe];
+  if (!cost) return false;
+  if (Object.entries(cost).some(([k,v]) => (state.materials[k] ?? 0) < v)) return false;
+  for (const [k,v] of Object.entries(cost)) state.materials[k] -= v;
+  if (recipe === 'Torch') state.torches += 2;
+  else if (recipe === 'Medicine') state.inventory.push({ id: `medicine-${Date.now()}`, name: 'Medicine', rarity: 'Common', value: 18, weight: 0.2 });
+  else if (recipe === 'Armor Reinforcement') state.inventory.push({ id: `reinforcement-${Date.now()}`, name: 'Armor Reinforcement', rarity: 'Uncommon', value: 35, armor: 2, weight: 0.5 });
+  else state.inventory.push({ id: `repair-kit-${Date.now()}`, name: 'Repair Kit', rarity: 'Common', value: 14, weight: 0.5 });
+  gainKnowledge(state, 8);
+  return true;
+}
+
+export function inflictInjury(state: GameState, mercId: string, injury?: string): boolean {
+  const merc = state.mercenaries.find(m => m.id === mercId);
+  if (!merc || merc.injury) return false;
+  merc.injury = injury ?? ['Sprained Ankle','Broken Rib','Deep Cut','Head Wound'][Math.floor(Math.random()*4)];
+  merc.movement = Math.max(90, merc.movement - 15);
+  return true;
+}
+
+export function healInjury(state: GameState, mercId: string): boolean {
+  const merc = state.mercenaries.find(m => m.id === mercId);
+  if (!merc?.injury) return false;
+  const medicineIndex = state.inventory.findIndex(i => i.name === 'Medicine' || i.name === 'Field Medicine');
+  if (medicineIndex < 0) return false;
+  state.inventory.splice(medicineIndex,1);
+  merc.injury = undefined;
+  merc.movement += 15;
+  return true;
+}
+
+export function personalityFoodCost(state: GameState): number {
+  return state.mercenaries.reduce((n,m)=>n + 2 + (m.traits.includes('Glutton') ? 1 : 0),0);
+}
+
+export function wageTotal(state: GameState): number {
+  return state.mercenaries.reduce((n,m)=>n + Math.round(m.wage * (m.traits.includes('Greedy') ? 1.15 : 1)),0);
+}
