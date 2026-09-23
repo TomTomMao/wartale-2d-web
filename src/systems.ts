@@ -4,6 +4,7 @@ const professionThresholds = [0, 30, 90, 220, 500];
 
 export function ensureCoreSystems(state: GameState): GameState {
   state.fatigue ??= 0;
+  state.origin ??= 'Wandering Friends';
   state.explorationMode ??= 'Adaptive';
   state.permadeath ??= false;
   state.influence ??= 30;
@@ -297,7 +298,8 @@ const recipeCosts: Record<string, Record<string, number>> = {
   'Repair Kit': { iron: 1, wood: 1 },
   'Medicine': { herbs: 2, cloth: 1 },
   'Torch': { wood: 1, cloth: 1 },
-  'Armor Reinforcement': { iron: 2, leather: 1 }
+  'Armor Reinforcement': { iron: 2, leather: 1 },
+  'Poison Oil': { herbs: 2, iron: 1 }
 };
 
 export function craftRecipe(state: GameState, recipe: string): boolean {
@@ -309,6 +311,7 @@ export function craftRecipe(state: GameState, recipe: string): boolean {
   if (recipe === 'Torch') state.torches += 2;
   else if (recipe === 'Medicine') state.inventory.push({ id: `medicine-${Date.now()}`, name: 'Medicine', rarity: 'Common', value: 18, weight: 0.2 });
   else if (recipe === 'Armor Reinforcement') state.inventory.push({ id: `reinforcement-${Date.now()}`, name: 'Armor Reinforcement', rarity: 'Uncommon', value: 35, armor: 2, weight: 0.5 });
+  else if (recipe === 'Poison Oil') state.inventory.push({ id: `poison-oil-${Date.now()}`, name: 'Poison Oil', rarity: 'Uncommon', value: 28, weight: 0.2 });
   else state.inventory.push({ id: `repair-kit-${Date.now()}`, name: 'Repair Kit', rarity: 'Common', value: 14, weight: 0.5 });
   gainKnowledge(state, 8);
   return true;
@@ -377,5 +380,39 @@ export function buyRope(state: GameState, cost = 8): boolean {
   if (state.crowns < cost) return false;
   state.crowns -= cost;
   state.ropes += 1;
+  return true;
+}
+
+
+export function applyOrigin(state: GameState, origin: GameState['origin']): void {
+  ensureCoreSystems(state);
+  state.origin = origin;
+  if (origin === 'Disgraced Guards') {
+    state.influence += 12;
+    state.crowns = Math.max(0, state.crowns - 20);
+    state.mercenaries.forEach(m => { m.maxArmor += 2; m.armor += 2; });
+  } else if (origin === 'Road Traders') {
+    state.crowns += 60;
+    state.tradeGoods.wool = (state.tradeGoods.wool ?? 0) + 2;
+    state.influence = Math.max(0, state.influence - 5);
+  } else {
+    state.food += 4;
+    state.morale = Math.min(100, state.morale + 8);
+  }
+}
+
+export function applyPoisonOil(state: GameState, mercId: string): boolean {
+  const merc = state.mercenaries.find(m => m.id === mercId);
+  const idx = state.inventory.findIndex(i => i.name === 'Poison Oil');
+  if (!merc || idx < 0 || !merc.equipment.weapon) return false;
+  state.inventory.splice(idx,1);
+  merc.weaponOil = 'Poison';
+  return true;
+}
+
+export function cycleAppearance(state: GameState, mercId: string): boolean {
+  const merc = state.mercenaries.find(m => m.id === mercId);
+  if (!merc) return false;
+  merc.appearanceVariant = ((merc.appearanceVariant ?? 0) + 1) % 4;
   return true;
 }
