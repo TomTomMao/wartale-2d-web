@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { acceptQuest, applyDamage, buyFood, createInitialState, equipItem, recruit, rest, sellItem, serializeState, deserializeState, turnInQuest } from '../src/domain';
 import { ITEMS } from '../src/data';
 import {
-  assignProfession, buildCampFacility, buyPony, buyTradeGood, capturePrisoner,
-  carryingCapacity, changeRelationship, commitCrime, ensureCoreSystems, exploreTomb,
-  sellTradeGood, turnInPrisoner, unlockKnowledge, workProfession
+  assignProfession, availableSkills, availableSpecializations, buildCampFacility, buyPony, buyTradeGood, captureAnimal, capturePrisoner,
+  carryingCapacity, changeRelationship, commitCrime, craftRecipe, ensureCoreSystems, exploreTomb,
+  healInjury, inflictInjury, learnSkill, sellTradeGood, specializeMercenary, turnInPrisoner, unlockKnowledge, workProfession
 } from '../src/systems';
 
 describe('combat rules', () => {
@@ -152,5 +152,67 @@ describe('Wartales-like management systems', () => {
     expect(unlockKnowledge(s,'field-rations')).toBe(true);
     expect(unlockKnowledge(s,'field-rations')).toBe(false);
     expect(s.knowledgePoints).toBe(1);
+  });
+});
+
+
+describe('specializations crafting injuries paths and animals', () => {
+  it('unlocks a class specialization at level 3', () => {
+    const s = createInitialState();
+    const m = s.mercenaries[0];
+    m.level = 3;
+    expect(availableSpecializations(m.class).length).toBeGreaterThan(0);
+    expect(specializeMercenary(s,m.id,availableSpecializations(m.class)[0])).toBe(true);
+    expect(m.specialization).toBeTruthy();
+  });
+
+  it('learns a class skill with a skill point', () => {
+    const s = createInitialState();
+    const m = s.mercenaries[0];
+    m.skillPoints = 1;
+    const skill = availableSkills(m.class)[0];
+    expect(learnSkill(s,m.id,skill)).toBe(true);
+    expect(m.learnedSkills).toContain(skill);
+    expect(m.skillPoints).toBe(0);
+  });
+
+  it('crafts recipes from materials', () => {
+    const s = createInitialState();
+    const before = s.torches;
+    expect(craftRecipe(s,'Torch')).toBe(true);
+    expect(s.torches).toBe(before + 2);
+  });
+
+  it('can inflict and heal injuries using medicine', () => {
+    const s = createInitialState();
+    const m = s.mercenaries[0];
+    expect(inflictInjury(s,m.id,'Deep Cut')).toBe(true);
+    s.inventory.push({id:'medicine-test',name:'Medicine',rarity:'Common',value:1});
+    expect(healInjury(s,m.id)).toBe(true);
+    expect(m.injury).toBeUndefined();
+  });
+
+  it('animal capture consumes rope and creates a combat companion', () => {
+    const s = createInitialState();
+    const ropes = s.ropes;
+    expect(captureAnimal(s,'Wolf')).toBe(true);
+    expect(s.ropes).toBe(ropes - 1);
+    expect(s.animals).toHaveLength(1);
+  });
+
+  it('crime progresses the crime path', () => {
+    const s = createInitialState();
+    const before = s.paths['Crime and Chaos'].xp;
+    commitCrime(s,80);
+    expect(s.paths['Crime and Chaos'].xp).toBeGreaterThan(before);
+  });
+
+  it('profession work progresses trade path', () => {
+    const s = createInitialState();
+    const m = s.mercenaries[0];
+    assignProfession(s,m.id,'Tinkerer');
+    const before = s.paths['Trade and Craftsmanship'].xp;
+    workProfession(s,m.id);
+    expect(s.paths['Trade and Craftsmanship'].xp).toBeGreaterThan(before);
   });
 });
