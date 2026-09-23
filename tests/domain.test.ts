@@ -4,7 +4,7 @@ import { ITEMS } from '../src/data';
 import {
   applyOrigin, applyPoisonOil, assignProfession, availableSkills, availableSpecializations, buildCampFacility, buyPony, buyTradeGood, captureAnimal, capturePrisoner,
   carryingCapacity, changeRelationship, commitCrime, craftRecipe, ensureCoreSystems, exploreTomb,
-  healInjury, inflictInjury, learnSkill, sellTradeGood, specializeMercenary, turnInPrisoner, unlockKnowledge, workProfession
+  healInjury, inflictInjury, learnSkill, sellTradeGood, setValorStyle, specializeMercenary, turnInPrisoner, unlockKnowledge, workProfession
 } from '../src/systems';
 
 describe('combat rules', () => {
@@ -249,5 +249,15 @@ describe('origin, influence, weapon compatibility and oils', () => {
     s.inventory.push({id:'poison-oil-test',name:'Poison Oil',rarity:'Uncommon',value:1});
     expect(applyPoisonOil(s,m.id)).toBe(true);
     expect(m.weaponOil).toBe('Poison');
+  });
+});
+
+
+describe('combat Valor style', () => {
+  it('assigns a configurable Valor generation condition', () => {
+    const s = createInitialState();
+    const m = s.mercenaries[0];
+    expect(setValorStyle(s,m.id,'Victory')).toBe(true);
+    expect(m.valorStyle).toBe('Victory');
   });
 });
