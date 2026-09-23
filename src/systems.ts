@@ -13,10 +13,10 @@ export function ensureCoreSystems(state: GameState): GameState {
   state.knowledgePoints ??= 0;
   state.unlockedKnowledge ??= [];
   state.prisoners ??= [];
-  state.ponies ??= [{ id: 'pony-1', name: 'Bracken', capacity: 30 }];
+  if (!state.ponies || state.ponies.length === 0) state.ponies = [{ id: 'pony-1', name: 'Bracken', capacity: 30 }];
   state.campFacilities ??= ['Campfire', 'Tent', 'Workshop'];
   state.torches ??= 6;
-  state.tombs ??= [
+  if (!state.tombs || state.tombs.length === 0) state.tombs = [
     { id: 'greenmarch-tomb', name: 'Mossbound Barrow', roomsExplored: 0, totalRooms: 5, codices: 0, completed: false },
     { id: 'ashen-tomb', name: 'Cinder Vault', roomsExplored: 0, totalRooms: 6, codices: 0, completed: false },
     { id: 'frost-tomb', name: 'White Crypt', roomsExplored: 0, totalRooms: 6, codices: 0, completed: false }
