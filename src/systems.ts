@@ -1,4 +1,4 @@
-import type { CampFacility, GameState, Item, PathName, Profession } from './types';
+import type { CampFacility, GameState, Item, PathName, Profession, ValorStyle } from './types';
 
 const professionThresholds = [0, 30, 90, 220, 500];
 
@@ -45,6 +45,7 @@ export function ensureCoreSystems(state: GameState): GameState {
     m.learnedSkills ??= [];
     m.skillPoints ??= 0;
     m.appearanceVariant ??= 0;
+    m.valorStyle ??= m.class === 'Ranger' ? 'Support' : m.class === 'Rogue' ? 'Victory' : 'Engagement';
   }
   return state;
 }
@@ -415,5 +416,13 @@ export function cycleAppearance(state: GameState, mercId: string): boolean {
   const merc = state.mercenaries.find(m => m.id === mercId);
   if (!merc) return false;
   merc.appearanceVariant = ((merc.appearanceVariant ?? 0) + 1) % 4;
+  return true;
+}
+
+
+export function setValorStyle(state: GameState, mercId: string, style: ValorStyle): boolean {
+  const merc = state.mercenaries.find(m => m.id === mercId);
+  if (!merc) return false;
+  merc.valorStyle = style;
   return true;
 }
