@@ -52,11 +52,13 @@ export interface Mercenary {
   traits: string[];
   equipment: Equipment;
   profession?: ProfessionProgress;
+  weaponOil?: 'Poison';
   specialization?: string;
   learnedSkills: string[];
   skillPoints: number;
   relations: Record<string, number>;
   injury?: string;
+  appearanceVariant: number;
 }
 
 export interface Quest {
@@ -133,6 +135,7 @@ export interface GameState {
   enemies: WorldEnemy[];
   currentRegion: string;
   difficulty: 'Easy' | 'Normal' | 'Hard';
+  origin: 'Wandering Friends' | 'Disgraced Guards' | 'Road Traders';
   explorationMode: 'Adaptive' | 'Region Locked';
   permadeath: boolean;
   influence: number;
