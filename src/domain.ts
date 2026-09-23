@@ -1,6 +1,6 @@
 import { BASE_QUEST, CLASS_STATS, ITEMS, startingEnemies } from './data';
 import { ensureCoreSystems, personalityFoodCost, wageTotal } from './systems';
-import type { AnimalCompanion, BattleUnit, GameState, Item, MercClass, Mercenary, Quest } from './types';
+import type { AnimalCompanion, BattleUnit, GameState, Item, MercClass, Mercenary, Quest, ValorStyle } from './types';
 
 let idCounter = 1;
 const uid = (prefix: string) => `${prefix}-${idCounter++}`;
@@ -9,13 +9,17 @@ export function cloneItem(item: Item): Item { return structuredClone(item); }
 
 export function createMercenary(name: string, cls: MercClass): Mercenary {
   const s = CLASS_STATS[cls];
+  const valorStyle: ValorStyle =
+    cls === 'Ranger' ? 'Support' :
+    cls === 'Rogue' ? 'Victory' :
+    'Engagement';
   return {
     id: uid('merc'), name, class: cls, level: 1, xp: 0,
     health: s.hp, maxHealth: s.hp, armor: s.armor, maxArmor: s.armor,
     strength: s.str, dexterity: s.dex, movement: s.move, crit: s.crit,
     wage: s.wage,
     traits: cls === 'Warrior' ? ['Strong'] : cls === 'Ranger' ? ['Quick'] : cls === 'Rogue' ? ['Greedy'] : ['Tough'],
-    equipment: {}, learnedSkills: [], skillPoints: 0, relations: {}, appearanceVariant: 0
+    equipment: {}, learnedSkills: [], skillPoints: 0, relations: {}, appearanceVariant: 0, valorStyle
   };
 }
 
@@ -205,7 +209,7 @@ export function enemyBattleUnits(kind: 'bandit' | 'wolf' | 'raider', strength = 
     side: 'enemy' as const, x: 650 + (i % 2) * 90, y: 250 + i * 85,
     health: 16 + strength * 6, maxHealth: 16 + strength * 6,
     armor: kind === 'wolf' ? 0 : 3 + strength * 2, maxArmor: kind === 'wolf' ? 0 : 3 + strength * 2,
-    power: 5 + strength * 2, movement: 145, crit: 0.06, acted: false, moved: false, facing: -1 as const, statuses: []
+    power: 5 + strength * 2, movement: 145, crit: 0.06, acted: false, moved: false, facing: -1 as const, statuses: [], valorTriggeredThisTurn: false
   }));
 }
 
@@ -225,6 +229,6 @@ export function animalToBattleUnit(a: AnimalCompanion, x: number, y: number): Ba
     id: uid('animal-unit'), name: a.name, side: 'player', x, y,
     health: a.health, maxHealth: a.maxHealth, armor: 0, maxArmor: 0,
     power: a.power, movement: a.movement, crit: 0.1, acted: false, moved: false,
-    animalId: a.id, facing: 1, statuses: []
+    animalId: a.id, facing: 1, statuses: [], valorTriggeredThisTurn: false
   };
 }
