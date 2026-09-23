@@ -257,6 +257,9 @@ function exposeTestApi(): void {
     getGameState: () => scene?.getSnapshot(),
     movePartyTo: (x: number, y: number) => scene?.testMovePartyTo(x,y),
     triggerEncounter: (id = 'bandit-1') => scene?.testTriggerEncounter(id),
+    battleSnapshot: () => scene?.testBattleSnapshot(),
+    selectFirstPlayer: () => scene?.testSelectFirstPlayer(),
+    moveSelectedTo: (col:number,row:number) => scene?.testMoveSelectedTo(col,row),
     save: () => saveGame(),
     resetSave: () => { resetSave(); location.reload(); }
   };
