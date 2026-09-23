@@ -896,5 +896,24 @@ export class GameScene extends Phaser.Scene {
     if (e) { this.encounterEnemy = e; this.emit({ type: 'encounter', enemy: { id: e.id, kind: e.kind, strength: e.strength } }); }
   }
 
+  testBattleSnapshot(): unknown {
+    return {
+      grid: this.battleGrid ? { ...this.battleGrid } : null,
+      obstacles: Array.from(this.battleObstacles),
+      units: this.battleUnits.map(u => ({ id:u.id,name:u.name,side:u.side,x:u.x,y:u.y,moved:u.moved,acted:u.acted }))
+    };
+  }
+
+  testSelectFirstPlayer(): string | null {
+    const unit=this.battleUnits.find(u=>u.side==='player'&&u.health>0&&!u.acted);
+    if(!unit)return null;
+    this.onUnitClicked(unit.id);
+    return unit.id;
+  }
+
+  testMoveSelectedTo(col:number,row:number): void {
+    this.moveSelectedToCell({col,row});
+  }
+
   getSnapshot(): unknown { return structuredClone(getState()); }
 }
