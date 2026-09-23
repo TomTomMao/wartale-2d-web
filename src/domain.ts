@@ -1,5 +1,5 @@
 import { BASE_QUEST, CLASS_STATS, ITEMS, startingEnemies } from './data';
-import { ensureCoreSystems } from './systems';
+import { ensureCoreSystems, personalityFoodCost, wageTotal } from './systems';
 import type { AnimalCompanion, BattleUnit, GameState, Item, MercClass, Mercenary, Quest } from './types';
 
 let idCounter = 1;
@@ -116,7 +116,7 @@ export function repairAll(state: GameState): number {
 }
 
 export function rest(state: GameState): { ok: boolean; wagesPaid: number } {
-  const neededFood = state.mercenaries.length * 2;
+  const neededFood = personalityFoodCost(state);
   if (state.food < neededFood) return { ok: false, wagesPaid: 0 };
   state.food -= neededFood;
   state.day += 1;
@@ -127,7 +127,7 @@ export function rest(state: GameState): { ok: boolean; wagesPaid: number } {
   for (const m of state.mercenaries) { m.health = m.maxHealth; m.armor = m.maxArmor; }
   let wagesPaid = 0;
   if (state.rests % 3 === 0) {
-    const wages = state.mercenaries.reduce((n, m) => n + m.wage, 0);
+    const wages = wageTotal(state);
     if (state.crowns >= wages) {
       state.crowns -= wages; wagesPaid = wages; state.morale = Math.min(100, state.morale + 8);
     } else state.morale = Math.max(0, state.morale - 20);
