@@ -25,7 +25,12 @@ export function ensureCoreSystems(state: GameState): GameState {
     { id: 'frost-tomb', name: 'White Crypt', roomsExplored: 0, totalRooms: 6, codices: 0, completed: false }
   ];
   state.tradeGoods ??= { wool: 0, salt: 0, spice: 0 };
-  state.materials ??= { iron: 4, leather: 4, wood: 5, herbs: 3, cloth: 2 };
+  state.materials ??= {};
+  state.materials.iron ??= 4;
+  state.materials.leather ??= 4;
+  state.materials.wood ??= 5;
+  state.materials.herbs ??= 3;
+  state.materials.cloth ??= 2;
   state.ropes ??= 3;
   state.animals ??= [];
   state.paths ??= {
