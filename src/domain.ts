@@ -64,23 +64,26 @@ export function applyDamage(target: { health: number; armor: number }, damage: n
   return { armorDamage, healthDamage };
 }
 
+export function canEquipItem(merc: Mercenary, item: Item): boolean {
+  if (!item.slot) return false;
+  if (item.slot !== 'weapon') return true;
+  const id = item.id.toLowerCase();
+  return (
+    (id.includes('bow') && merc.class === 'Ranger') ||
+    (id.includes('axe') && merc.class === 'Warrior') ||
+    (id.includes('spear') && merc.class === 'Spearman') ||
+    (id.includes('dagger') && merc.class === 'Rogue') ||
+    (id.includes('sword') && (merc.class === 'Swordsman' || merc.class === 'Warrior')) ||
+    (!id.includes('bow') && !id.includes('axe') && !id.includes('spear') && !id.includes('dagger') && !id.includes('sword'))
+  );
+}
+
 export function equipItem(state: GameState, mercId: string, itemId: string): boolean {
   const merc = state.mercenaries.find(m => m.id === mercId);
   const index = state.inventory.findIndex(i => i.id === itemId);
   if (!merc || index < 0) return false;
   const item = state.inventory[index];
-  if (!item.slot) return false;
-  if (item.slot === 'weapon') {
-    const id = item.id.toLowerCase();
-    const allowed =
-      (id.includes('bow') && merc.class === 'Ranger') ||
-      (id.includes('axe') && merc.class === 'Warrior') ||
-      (id.includes('spear') && merc.class === 'Spearman') ||
-      (id.includes('dagger') && merc.class === 'Rogue') ||
-      (id.includes('sword') && (merc.class === 'Swordsman' || merc.class === 'Warrior')) ||
-      (!id.includes('bow') && !id.includes('axe') && !id.includes('spear') && !id.includes('dagger') && !id.includes('sword'));
-    if (!allowed) return false;
-  }
+  if (!canEquipItem(merc, item)) return false;
   const old = merc.equipment[item.slot];
   merc.equipment[item.slot] = item;
   state.inventory.splice(index, 1);
