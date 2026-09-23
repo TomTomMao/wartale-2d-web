@@ -15,7 +15,7 @@ export function createMercenary(name: string, cls: MercClass): Mercenary {
     strength: s.str, dexterity: s.dex, movement: s.move, crit: s.crit,
     wage: s.wage,
     traits: cls === 'Warrior' ? ['Strong'] : cls === 'Ranger' ? ['Quick'] : cls === 'Rogue' ? ['Greedy'] : ['Tough'],
-    equipment: {}, learnedSkills: [], skillPoints: 0, relations: {}
+    equipment: {}, learnedSkills: [], skillPoints: 0, relations: {}, appearanceVariant: 0
   };
 }
 
@@ -32,7 +32,7 @@ export function createInitialState(companyName = 'Iron Wolves', leaderClass: Mer
     inventory: [cloneItem(ITEMS.bread), cloneItem(ITEMS.meat)],
     quests: [structuredClone(BASE_QUEST)], discovered: ['stonebridge'],
     enemies: startingEnemies(), currentRegion: 'Greenmarch', difficulty,
-    explorationMode: 'Adaptive', permadeath: false, influence: 30,
+    origin: 'Wandering Friends', explorationMode: 'Adaptive', permadeath: false, influence: 30,
     fatigue: 0, maxFatigue: 100, valor: 2, maxValor: 4,
     suspicion: 0, wantedLevel: 0, knowledge: 0, knowledgePoints: 0,
     unlockedKnowledge: [], prisoners: [], ponies: [], campFacilities: [],
@@ -66,6 +66,17 @@ export function equipItem(state: GameState, mercId: string, itemId: string): boo
   if (!merc || index < 0) return false;
   const item = state.inventory[index];
   if (!item.slot) return false;
+  if (item.slot === 'weapon') {
+    const id = item.id.toLowerCase();
+    const allowed =
+      (id.includes('bow') && merc.class === 'Ranger') ||
+      (id.includes('axe') && merc.class === 'Warrior') ||
+      (id.includes('spear') && merc.class === 'Spearman') ||
+      (id.includes('dagger') && merc.class === 'Rogue') ||
+      (id.includes('sword') && (merc.class === 'Swordsman' || merc.class === 'Warrior')) ||
+      (!id.includes('bow') && !id.includes('axe') && !id.includes('spear') && !id.includes('dagger') && !id.includes('sword'));
+    if (!allowed) return false;
+  }
   const old = merc.equipment[item.slot];
   merc.equipment[item.slot] = item;
   state.inventory.splice(index, 1);
