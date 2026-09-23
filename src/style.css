@@ -221,3 +221,14 @@ button{user-select:none}
   .topbar{min-height:48px}.company-mark{width:30px;height:30px}.quickbar.mobile-nav,.battle-actions{bottom:4px}
   .panel,.panel.wide{max-height:92dvh}.camp-art{height:145px}
 }
+
+.expanded-actions{max-width:calc(100vw - 24px);overflow-x:auto;overflow-y:hidden;justify-content:flex-start;scrollbar-width:thin}
+.expanded-actions .action-btn{flex:0 0 auto}
+.selected-skill{border-color:#f0cf7b!important;box-shadow:0 0 0 2px rgba(240,207,123,.2),inset 0 1px rgba(255,255,255,.1)}
+@media(max-width:700px){
+  .battle-actions.expanded-actions{
+    display:flex;left:8px;right:8px;transform:none;width:auto;overflow-x:auto;justify-content:flex-start;
+    scroll-snap-type:x proximity;padding-bottom:calc(6px + env(safe-area-inset-bottom))
+  }
+  .battle-actions.expanded-actions .action-btn{flex:0 0 92px;min-width:92px;scroll-snap-align:start}
+}
