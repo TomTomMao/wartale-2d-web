@@ -50,3 +50,16 @@ Battle: click a blue mercenary, click ground to move, click a nearby red enemy t
 - `src/main.ts` — UI and orchestration
 - `tests/domain.test.ts` — unit tests
 - `tests/e2e/game.spec.ts` — Playwright smoke scenarios
+
+
+## Mobile browser
+
+The game supports touch-first play on modern mobile browsers.
+
+- Tap the world to move the company.
+- Use the fixed bottom navigation for Company, Contracts, Knowledge, Camp and Save.
+- Town, inventory, camp and knowledge screens open as mobile bottom sheets.
+- In battle, tap a blue unit, tap a valid location to move, then tap an enemy to attack.
+- Battle actions are fixed above the safe-area at the bottom of the screen.
+- Responsive tactical deployment keeps both sides visible on narrow portrait displays.
+- iPhone-sized Chromium touch emulation is covered by Playwright CI.
