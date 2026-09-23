@@ -976,5 +976,9 @@ export class GameScene extends Phaser.Scene {
     this.refreshBattleHud();
   }
 
+  testIsCellBlocked(col:number,row:number): boolean {
+    return this.occupiedCells().has(cellKey({col,row}));
+  }
+
   getSnapshot(): unknown { return structuredClone(getState()); }
 }
