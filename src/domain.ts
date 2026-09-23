@@ -32,6 +32,7 @@ export function createInitialState(companyName = 'Iron Wolves', leaderClass: Mer
     inventory: [cloneItem(ITEMS.bread), cloneItem(ITEMS.meat)],
     quests: [structuredClone(BASE_QUEST)], discovered: ['stonebridge'],
     enemies: startingEnemies(), currentRegion: 'Greenmarch', difficulty,
+    explorationMode: 'Adaptive', permadeath: false, influence: 30,
     fatigue: 0, maxFatigue: 100, valor: 2, maxValor: 4,
     suspicion: 0, wantedLevel: 0, knowledge: 0, knowledgePoints: 0,
     unlockedKnowledge: [], prisoners: [], ponies: [], campFacilities: [],
@@ -93,8 +94,11 @@ export function buyFood(state: GameState, amount = 6, cost = 12): boolean {
 }
 
 export function recruit(state: GameState, name = 'Kestrel', cls: MercClass = 'Spearman', cost = 85): boolean {
-  if (state.crowns < cost || state.mercenaries.length >= 10) return false;
+  ensureCoreSystems(state);
+  const influenceCost = 10;
+  if (state.crowns < cost || state.influence < influenceCost || state.mercenaries.length >= 10) return false;
   state.crowns -= cost;
+  state.influence -= influenceCost;
   state.mercenaries.push(createMercenary(name, cls));
   return true;
 }
@@ -158,6 +162,7 @@ export function turnInQuest(state: GameState, questId: string): boolean {
   if (!q || q.state !== 'active' || q.progress < q.required) return false;
   q.state = 'completed';
   state.crowns += q.rewardCrowns;
+  state.influence += 10;
   for (const m of state.mercenaries) gainXp(m, q.rewardXp);
   return true;
 }
