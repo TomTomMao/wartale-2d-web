@@ -2,6 +2,8 @@ export type MercClass = 'Swordsman' | 'Warrior' | 'Ranger' | 'Spearman' | 'Rogue
 export type ItemRarity = 'Common' | 'Uncommon' | 'Rare' | 'Epic' | 'Legendary';
 export type ItemSlot = 'weapon' | 'armor' | 'helmet' | 'accessory';
 export type QuestState = 'available' | 'active' | 'completed';
+export type Profession = 'Tinkerer' | 'Blacksmith' | 'Cook' | 'Alchemist' | 'Miner' | 'Scholar' | 'Thief';
+export type CampFacility = 'Campfire' | 'Tent' | 'Workshop' | 'Cooking Pot' | 'Lectern' | 'Strategy Table';
 
 export interface Item {
   id: string;
@@ -14,6 +16,9 @@ export interface Item {
   food?: number;
   durability?: number;
   maxDurability?: number;
+  weight?: number;
+  stolen?: boolean;
+  tradeGood?: string;
 }
 
 export interface Equipment {
@@ -21,6 +26,12 @@ export interface Equipment {
   armor?: Item;
   helmet?: Item;
   accessory?: Item;
+}
+
+export interface ProfessionProgress {
+  name: Profession;
+  level: number;
+  xp: number;
 }
 
 export interface Mercenary {
@@ -40,6 +51,9 @@ export interface Mercenary {
   wage: number;
   traits: string[];
   equipment: Equipment;
+  profession?: ProfessionProgress;
+  relations: Record<string, number>;
+  injury?: string;
 }
 
 export interface Quest {
@@ -65,6 +79,28 @@ export interface WorldEnemy {
   alive: boolean;
 }
 
+export interface Prisoner {
+  id: string;
+  name: string;
+  bounty: number;
+  escapeRisk: number;
+}
+
+export interface Pony {
+  id: string;
+  name: string;
+  capacity: number;
+}
+
+export interface TombProgress {
+  id: string;
+  name: string;
+  roomsExplored: number;
+  totalRooms: number;
+  codices: number;
+  completed: boolean;
+}
+
 export interface GameState {
   companyName: string;
   crowns: number;
@@ -81,6 +117,22 @@ export interface GameState {
   enemies: WorldEnemy[];
   currentRegion: string;
   difficulty: 'Easy' | 'Normal' | 'Hard';
+
+  fatigue: number;
+  maxFatigue: number;
+  valor: number;
+  maxValor: number;
+  suspicion: number;
+  wantedLevel: number;
+  knowledge: number;
+  knowledgePoints: number;
+  unlockedKnowledge: string[];
+  prisoners: Prisoner[];
+  ponies: Pony[];
+  campFacilities: CampFacility[];
+  torches: number;
+  tombs: TombProgress[];
+  tradeGoods: Record<string, number>;
 }
 
 export interface BattleUnit {
@@ -99,4 +151,7 @@ export interface BattleUnit {
   acted: boolean;
   moved: boolean;
   mercenaryId?: string;
+  facing?: 1 | -1;
+  engagedWithId?: string;
+  statuses?: string[];
 }
