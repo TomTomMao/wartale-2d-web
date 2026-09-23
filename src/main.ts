@@ -21,7 +21,7 @@ let currentTownName = 'Stonebridge';
 let currentVictoryKind: 'bandit' | 'wolf' | 'raider' | null = null;
 
 const professions: Profession[] = ['Tinkerer','Blacksmith','Cook','Alchemist','Miner','Scholar','Thief'];
-const facilities: CampFacility[] = ['Cooking Pot','Lectern','Strategy Table'];
+const facilities: CampFacility[] = ['Cooking Pot','Lectern','Strategy Table','Training Dummy','Stocks'];
 const knowledgeNodes = [
   ['field-rations','Field Rations: +camp efficiency'],
   ['nimble-fingers','Nimble Fingers: crime path perk'],
@@ -67,7 +67,7 @@ function renderWorldHud(): void {
   hud.innerHTML = `
     <div class="topbar" data-testid="world-hud">
       <div><strong>${s.companyName}</strong><span>Day ${s.day}</span><span>${s.currentRegion}</span><span>⚡ Fatigue ${Math.round(s.fatigue)}/${s.maxFatigue}</span></div>
-      <div><span>👑 ${s.crowns}</span><span>🍞 ${s.food}</span><span>⚔ Valor ${s.valor}/${s.maxValor}</span><span>⚖ Wanted ${s.wantedLevel}</span><span>🎒 ${weight.toFixed(1)}/${cap}</span></div>
+      <div><span>👑 ${s.crowns}</span><span>✦ Influence ${s.influence}</span><span>🍞 ${s.food}</span><span>⚔ Valor ${s.valor}/${s.maxValor}</span><span>⚖ Wanted ${s.wantedLevel}</span><span>🎒 ${weight.toFixed(1)}/${cap}</span></div>
     </div>
     <div class="quickbar">
       ${button('Company [I]', 'inventory')}
@@ -123,6 +123,8 @@ function showNewGame(): void {
       <label>Company name<input id="company-name" value="Iron Wolves" maxlength="28" /></label>
       <label>Starting leader<select id="leader-class"><option>Swordsman</option><option>Warrior</option><option>Ranger</option></select></label>
       <label>Difficulty<select id="difficulty"><option>Easy</option><option selected>Normal</option><option>Hard</option></select></label>
+      <label>Exploration<select id="exploration-mode"><option selected>Adaptive</option><option>Region Locked</option></select></label>
+      <label>Permadeath<select id="permadeath"><option value="off" selected>Off</option><option value="on">On</option></select></label>
       ${button('Begin Journey', 'start-game', 'primary')}
       ${button('Back', 'main-menu')}
     </div>`;
@@ -195,12 +197,12 @@ function showTown(name: string): void {
   const prisoners = s.prisoners.map(p=>`<button class="mini" data-action="turn-prisoner" data-prisoner="${p.id}">Turn in ${p.name} (+${p.bounty})</button>`).join('') || '<span class="muted">No prisoners.</span>';
   modal.innerHTML = `<div class="panel wide town-panel" data-testid="town-panel"><header><div><small>Settlement · ${s.currentRegion}</small><h2>${name}</h2></div><button class="x" data-action="close">×</button></header>
     <div class="town-grid">
-      <div class="service"><h3>🍺 Tavern & Stable</h3><p>Recruit mercenaries, buy pack animals and rope.</p>${button('Recruit Kestrel', 'recruit')}${button('Buy Pack Pony (90)', 'buy-pony')}${button('Buy Rope (8)', 'buy-rope')}</div>
+      <div class="service"><h3>🍺 Tavern & Stable</h3><p>Recruit mercenaries with crowns + Influence, buy pack animals and rope.</p>${button('Recruit Kestrel', 'recruit')}${button('Buy Pack Pony (90)', 'buy-pony')}${button('Buy Rope (8)', 'buy-rope')}</div>
       <div class="service"><h3>⚒ Blacksmith</h3><p>Repair company equipment.</p>${button('Repair all', 'repair')}</div>
       <div class="service"><h3>🧺 Market & Trade</h3><p>6 food for 12 crowns. Regional prices create caravan opportunities.</p>${button('Buy provisions', 'buy-food')}${trade}${button('Steal supplies', 'steal', 'danger')}</div>
       <div class="service"><h3>📜 Contract Board</h3><p>${q.name} — ${q.state}</p>${q.state==='available' ? button('Accept contract','accept-town-quest') : q.state==='active'&&q.progress>=q.required ? button('Claim reward','turn-in-town-quest','primary') : '<span class="muted">Return after defeating the target.</span>'}</div>
       <div class="service"><h3>⚖ Watch House</h3><p>Suspicion ${Math.round(s.suspicion)} · Wanted level ${s.wantedLevel}</p>${prisoners}</div>
-    </div><footer>👑 ${s.crowns} · 🍞 ${s.food} · 🐴 ${s.ponies.length}</footer></div>`;
+    </div><footer>👑 ${s.crowns} · ✦ ${s.influence} Influence · 🍞 ${s.food} · 🐴 ${s.ponies.length}</footer></div>`;
 }
 
 function showTomb(id: string, name: string): void {
@@ -273,7 +275,13 @@ document.addEventListener('click', (e) => {
     const company = (document.querySelector<HTMLInputElement>('#company-name')?.value || 'Iron Wolves').trim();
     const cls = document.querySelector<HTMLSelectElement>('#leader-class')!.value as MercClass;
     const difficulty = document.querySelector<HTMLSelectElement>('#difficulty')!.value as GameState['difficulty'];
-    startNewGame(company, cls, difficulty); closeModal(); bootGame();
+    const explorationMode = document.querySelector<HTMLSelectElement>('#exploration-mode')!.value as GameState['explorationMode'];
+    const permadeath = document.querySelector<HTMLSelectElement>('#permadeath')!.value === 'on';
+    const state = startNewGame(company, cls, difficulty);
+    state.explorationMode = explorationMode;
+    state.permadeath = permadeath;
+    saveGame();
+    closeModal(); bootGame();
   }
   else if (action === 'inventory') showInventory();
   else if (action === 'quests') showQuests();
