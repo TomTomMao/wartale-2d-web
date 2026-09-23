@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { acceptQuest, applyDamage, buyFood, createInitialState, equipItem, recruit, rest, sellItem, serializeState, deserializeState, turnInQuest } from '../src/domain';
+import { acceptQuest, applyDamage, buyFood, canEquipItem, createInitialState, equipItem, recruit, rest, sellItem, serializeState, deserializeState, turnInQuest } from '../src/domain';
 import { ITEMS } from '../src/data';
 import {
   applyOrigin, applyPoisonOil, assignProfession, availableSkills, availableSpecializations, buildCampFacility, buyPony, buyTradeGood, captureAnimal, capturePrisoner,
@@ -259,5 +259,25 @@ describe('combat Valor style', () => {
     const m = s.mercenaries[0];
     expect(setValorStyle(s,m.id,'Victory')).toBe(true);
     expect(m.valorStyle).toBe('Victory');
+  });
+});
+
+
+describe('equipment targeting', () => {
+  it('can equip compatible gear on a non-leader mercenary', () => {
+    const s = createInitialState();
+    const ranger = s.mercenaries.find(m => m.class === 'Ranger')!;
+    s.inventory.push(structuredClone(ITEMS.hunterBow));
+    expect(canEquipItem(ranger, ITEMS.hunterBow)).toBe(true);
+    expect(equipItem(s, ranger.id, 'hunter-bow')).toBe(true);
+    expect(ranger.equipment.weapon?.id).toBe('hunter-bow');
+  });
+
+  it('only exposes compatible weapon targets', () => {
+    const s = createInitialState();
+    const sword = s.mercenaries.find(m => m.class === 'Swordsman')!;
+    const ranger = s.mercenaries.find(m => m.class === 'Ranger')!;
+    expect(canEquipItem(sword, ITEMS.hunterBow)).toBe(false);
+    expect(canEquipItem(ranger, ITEMS.hunterBow)).toBe(true);
   });
 });
