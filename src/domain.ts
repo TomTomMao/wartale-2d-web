@@ -1,6 +1,6 @@
 import { BASE_QUEST, CLASS_STATS, ITEMS, startingEnemies } from './data';
 import { ensureCoreSystems } from './systems';
-import type { BattleUnit, GameState, Item, MercClass, Mercenary, Quest } from './types';
+import type { AnimalCompanion, BattleUnit, GameState, Item, MercClass, Mercenary, Quest } from './types';
 
 let idCounter = 1;
 const uid = (prefix: string) => `${prefix}-${idCounter++}`;
@@ -35,7 +35,13 @@ export function createInitialState(companyName = 'Iron Wolves', leaderClass: Mer
     fatigue: 0, maxFatigue: 100, valor: 2, maxValor: 4,
     suspicion: 0, wantedLevel: 0, knowledge: 0, knowledgePoints: 0,
     unlockedKnowledge: [], prisoners: [], ponies: [], campFacilities: [],
-    torches: 6, tombs: [], tradeGoods: {}, materials: {}
+    torches: 6, tombs: [], tradeGoods: {}, materials: {}, ropes: 3, animals: [],
+    paths: {
+      'Power and Glory': { xp: 0, level: 1, points: 0 },
+      'Trade and Craftsmanship': { xp: 0, level: 1, points: 0 },
+      'Crime and Chaos': { xp: 0, level: 1, points: 0 },
+      'Mysteries and Wisdom': { xp: 0, level: 1, points: 0 }
+    }
   });
 }
 
@@ -195,4 +201,14 @@ export function deserializeState(raw: string): GameState | null {
     if (!value || !Array.isArray(value.mercenaries) || typeof value.crowns !== 'number') return null;
     return ensureCoreSystems(value);
   } catch { return null; }
+}
+
+
+export function animalToBattleUnit(a: AnimalCompanion, x: number, y: number): BattleUnit {
+  return {
+    id: uid('animal-unit'), name: a.name, side: 'player', x, y,
+    health: a.health, maxHealth: a.maxHealth, armor: 0, maxArmor: 0,
+    power: a.power, movement: a.movement, crit: 0.1, acted: false, moved: false,
+    animalId: a.id, facing: 1, statuses: []
+  };
 }
