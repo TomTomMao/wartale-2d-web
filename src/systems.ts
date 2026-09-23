@@ -325,7 +325,8 @@ export function healInjury(state: GameState, mercId: string): boolean {
 }
 
 export function personalityFoodCost(state: GameState): number {
-  return state.mercenaries.reduce((n,m)=>n + 2 + (m.traits.includes('Glutton') ? 1 : 0),0);
+  ensureCoreSystems(state);
+  return state.mercenaries.reduce((n,m)=>n + 2 + (m.traits.includes('Glutton') ? 1 : 0),0) + state.animals.length * 4;
 }
 
 export function wageTotal(state: GameState): number {
