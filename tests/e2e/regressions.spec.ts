@@ -68,9 +68,24 @@ test('rapid movement and attack input is serialized', async ({page}) => {
   const goal = {col:startCell.col+1,row:startCell.row};
   const x=before.grid.originX+(goal.col+.5)*before.grid.cellSize;
   const y=before.grid.originY+(goal.row+.5)*before.grid.cellSize;
+  // Probe synchronously when the action locks. A second Playwright round trip can
+  // arrive after the 95ms tween on a busy CI runner, when ending a turn is valid.
+  await page.evaluate(() => {
+    const probe = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail.type !== 'battleHud' || detail.phase !== 'resolving') return;
+      window.removeEventListener('ironbound:ui', probe);
+      const end = document.querySelector<HTMLButtonElement>('[data-action="end-unit"]')!;
+      const disabled = end.disabled;
+      end.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      const battle = (window as any).__GAME_TEST_API__.battleSnapshot();
+      (window as any).__ACTION_LOCK_PROBE__ = { disabled, phase: battle.phase };
+    };
+    window.addEventListener('ironbound:ui', probe);
+  });
   await page.mouse.click(x,y);
-  await page.getByRole('button',{name:/End Unit/}).dispatchEvent('click');
   await stable(page);
+  expect(await page.evaluate(() => (window as any).__ACTION_LOCK_PROBE__)).toEqual({ disabled: true, phase: 'resolving' });
   const moved=(await snapshot(page)).units.find(u=>u.id===mover.id)!;
   expect(worldToCell(before.grid,moved.x,moved.y)).toEqual(goal);
   expect(moved.acted).toBe(false);
