@@ -1,6 +1,16 @@
-import type { CampFacility, GameState, Item, PathName, Profession, ValorStyle } from './types';
+import type { CampFacility, GameState, Item, Mercenary, PathName, Profession, ValorStyle } from './types';
+import { missingResources, spendResources, type ResourceCost } from './resources';
 
-const professionThresholds = [0, 30, 90, 220, 500];
+export const professionThresholds = [0, 30, 90, 220, 500];
+export const PROFESSION_INFO: Record<Profession, string> = {
+  Blacksmith: 'Forge weapons and armor, upgrade gear to +3, and repair the whole company with iron.',
+  Cook: 'Cook grain into provisions. Your best cook reduces rest food by 1 (2 at Lv 4). A Cooking Pot improves meals.',
+  Miner: 'Prospect for iron each day and extract extra ore at the Iron Mine. Higher levels yield more iron.',
+  Alchemist: 'Brew medicine and poison oil from herbs. Lv 3 alchemists produce two doses per recipe.',
+  Tinkerer: 'Make repair kits, extra torches and armor reinforcement at your Workshop. Salvage more wood at the Old Mill.',
+  Scholar: 'Study for knowledge, gain extra knowledge in tombs and identify battlefield records. A Lectern improves research.',
+  Thief: 'Open locked caches without materials and steal with less suspicion. Daily work earns crowns at a cost in suspicion.'
+};
 
 export function ensureCoreSystems(state: GameState): GameState {
   state.fatigue ??= 0;
@@ -16,6 +26,7 @@ export function ensureCoreSystems(state: GameState): GameState {
   state.knowledge ??= 0;
   state.knowledgePoints ??= 0;
   state.unlockedKnowledge ??= [];
+  state.locations ??= {};
   state.prisoners ??= [];
   if (!state.ponies || state.ponies.length === 0) state.ponies = [{ id: 'pony-1', name: 'Bracken', capacity: 30 }];
   state.campFacilities ??= ['Campfire', 'Tent', 'Workshop'];
@@ -32,6 +43,7 @@ export function ensureCoreSystems(state: GameState): GameState {
   state.materials.wood ??= 5;
   state.materials.herbs ??= 3;
   state.materials.cloth ??= 2;
+  state.materials.grain ??= 4;
   state.ropes ??= 3;
   state.animals ??= [];
   state.paths ??= {
@@ -42,6 +54,7 @@ export function ensureCoreSystems(state: GameState): GameState {
   };
   for (const m of state.mercenaries) {
     m.relations ??= {};
+    m.professionHistory ??= {};
     m.learnedSkills ??= [];
     m.skillPoints ??= 0;
     m.appearanceVariant ??= 0;
@@ -83,39 +96,82 @@ export function travelStep(state: GameState, distance: number, onRoad = false): 
 export function assignProfession(state: GameState, mercId: string, profession: Profession): boolean {
   ensureCoreSystems(state);
   const merc = state.mercenaries.find(m => m.id === mercId);
-  if (!merc) return false;
+  if (!merc || !Object.hasOwn(PROFESSION_INFO, profession)) return false;
   if (merc.profession?.name === profession) return true;
-  merc.profession = { name: profession, level: 1, xp: 0 };
+  if (merc.profession) merc.professionHistory![merc.profession.name] = { ...merc.profession };
+  merc.profession = { ...(merc.professionHistory![profession] ?? { name: profession, level: 1, xp: 0 }) };
   return true;
 }
 
-export function workProfession(state: GameState, mercId: string): string {
+export function bestProfessional(state: GameState, profession: Profession): Mercenary | undefined {
+  return state.mercenaries.filter(m => m.health > 0 && m.profession?.name === profession).sort((a, b) => b.profession!.level - a.profession!.level || b.profession!.xp - a.profession!.xp)[0];
+}
+
+export function awardProfessionXp(state: GameState, merc: Mercenary, amount: number): void {
+  if (!merc.profession) return;
+  const p = merc.profession;
+  p.xp += amount;
+  while (p.level < 5 && p.xp >= professionThresholds[p.level]) p.level += 1;
+  merc.professionHistory ??= {};
+  merc.professionHistory[p.name] = { ...p };
+  awardPathXp(state, 'Trade and Craftsmanship', 5);
+}
+
+function needsRepair(merc: Mercenary): boolean {
+  return merc.armor < merc.maxArmor || Object.values(merc.equipment).some(i => i?.maxDurability && (i.durability ?? i.maxDurability) < i.maxDurability);
+}
+
+export function professionWorkStatus(state: GameState, mercId: string): { label: string; benefit: string; cost: ResourceCost; reason?: string } {
   ensureCoreSystems(state);
   const merc = state.mercenaries.find(m => m.id === mercId);
-  if (!merc?.profession) return 'Assign a profession first.';
-  if (merc.lastWorkedDay === state.day) return `${merc.name} has already worked today. Rest before working again.`;
+  if (!merc?.profession) return { label: 'Assign a profession', benefit: '', cost: {}, reason: 'Assign a profession first.' };
+  const level = merc.profession.level;
+  const jobs: Record<Profession, { label: string; benefit: string; cost: ResourceCost }> = {
+    Cook: { label: 'Prepare meals', benefit: `+${6 + level + (state.campFacilities.includes('Cooking Pot') ? 2 : 0)} provisions · +2 morale`, cost: { materials: { grain: 2, wood: 1 } } },
+    Miner: { label: 'Prospect for ore', benefit: `+${2 + level} iron`, cost: {} },
+    Blacksmith: { label: 'Repair company', benefit: 'Restore all equipped armor and durability', cost: { materials: { iron: 1 } } },
+    Alchemist: { label: 'Brew medicine', benefit: `+${level >= 3 ? 2 : 1} Field Medicine · treats injuries`, cost: { materials: { herbs: 2, cloth: 1 } } },
+    Tinkerer: { label: 'Make repair kits', benefit: '+2 Repair Kits · restore one mercenary’s equipment each', cost: { materials: { iron: 1, wood: 1 } } },
+    Scholar: { label: 'Study field notes', benefit: `+${25 + level * 5 + (state.campFacilities.includes('Lectern') ? 15 : 0)} knowledge`, cost: {} },
+    Thief: { label: 'Fence a small haul', benefit: `+${20 + level * 4} crowns · +${Math.round(Math.max(6, 22 - level * 3) * (state.unlockedKnowledge.includes('nimble-fingers') ? .8 : 1))} suspicion`, cost: {} }
+  };
+  const job = jobs[merc.profession.name];
+  const reason = merc.lastWorkedDay === state.day ? `${merc.name} has already worked today. Rest before working again.`
+    : merc.health <= 0 ? 'This mercenary cannot work.'
+    : merc.profession.name === 'Blacksmith' && !state.mercenaries.some(needsRepair) ? 'Company equipment is already repaired.'
+    : merc.profession.name === 'Tinkerer' && !state.campFacilities.includes('Workshop') ? 'Build a Workshop first.'
+    : missingResources(state, job.cost);
+  return { ...job, reason };
+}
+
+export function workProfession(state: GameState, mercId: string): string {
+  const job = professionWorkStatus(state, mercId);
+  if (job.reason) return job.reason;
+  const merc = state.mercenaries.find(m => m.id === mercId)!;
+  const p = merc.profession!;
+  const level = p.level;
+  spendResources(state, job.cost);
   merc.lastWorkedDay = state.day;
-  const p = merc.profession;
-  p.xp += 25;
-  awardPathXp(state, 'Trade and Craftsmanship', 5);
-  if (p.level < 5 && p.xp >= professionThresholds[p.level]) p.level += 1;
-  gainKnowledge(state, 12);
   switch (p.name) {
-    case 'Cook': state.food += 4 + p.level; return `${merc.name} prepared preserved meals.`;
-    case 'Miner': state.crowns += 8 + p.level * 3; return `${merc.name} extracted saleable ore.`;
-    case 'Scholar': gainKnowledge(state, 30); return `${merc.name} studied old fragments.`;
-    case 'Thief': commitCrime(state, 18); state.crowns += 20 + p.level * 4; return `${merc.name} fenced a small haul.`;
+    case 'Cook': state.food += 6 + level + (state.campFacilities.includes('Cooking Pot') ? 2 : 0); state.morale = Math.min(100, state.morale + 2); break;
+    case 'Miner': state.materials.iron += 2 + level; break;
+    case 'Scholar': gainKnowledge(state, 25 + level * 5 + (state.campFacilities.includes('Lectern') ? 15 : 0)); break;
+    case 'Thief': commitCrime(state, Math.max(6, 22 - level * 3)); state.crowns += 20 + level * 4; break;
     case 'Alchemist':
-      state.inventory.push({ id: `medicine-${Date.now()}`, name: 'Field Medicine', rarity: 'Common', value: 18, weight: 0.2 });
-      return `${merc.name} brewed field medicine.`;
+      for (let i = 0; i < (level >= 3 ? 2 : 1); i++) state.inventory.push({ id: `medicine-${crypto.randomUUID()}`, name: 'Field Medicine', rarity: 'Common', value: 18, weight: 0.2 });
+      break;
     case 'Blacksmith':
-      merc.armor = merc.maxArmor;
-      for (const item of Object.values(merc.equipment)) if (item?.maxDurability) item.durability = item.maxDurability;
-      return `${merc.name} repaired their equipment.`;
-    default:
-      state.inventory.push({ id: `kit-${Date.now()}`, name: 'Repair Kit', rarity: 'Common', value: 12, weight: 0.5 });
-      return `${merc.name} crafted a repair kit.`;
+      for (const member of state.mercenaries) {
+        member.armor = member.maxArmor;
+        for (const item of Object.values(member.equipment)) if (item?.maxDurability) item.durability = item.maxDurability;
+      }
+      break;
+    case 'Tinkerer':
+      for (let i = 0; i < 2; i++) state.inventory.push({ id: `repair-kit-${crypto.randomUUID()}`, name: 'Repair Kit', rarity: 'Common', value: 14, weight: 0.5 });
+      break;
   }
+  awardProfessionXp(state, merc, 25);
+  return `${merc.name}: ${job.label.toLowerCase()}. ${job.benefit}. +25 profession XP.`;
 }
 
 export function commitCrime(state: GameState, severity: number): void {
@@ -207,13 +263,14 @@ export function sellTradeGood(state: GameState, good: string): number {
   return price;
 }
 
+export const CAMP_FACILITY_COSTS: Record<CampFacility, number> = {
+  Campfire: 0, Tent: 0, Workshop: 0, 'Cooking Pot': 45, Lectern: 60, 'Strategy Table': 75, 'Training Dummy': 70, Stocks: 65
+};
+
 export function buildCampFacility(state: GameState, facility: CampFacility): boolean {
   ensureCoreSystems(state);
-  if (state.campFacilities.includes(facility)) return false;
-  const costs: Record<CampFacility, number> = {
-    Campfire: 0, Tent: 0, Workshop: 0, 'Cooking Pot': 45, Lectern: 60, 'Strategy Table': 75, 'Training Dummy': 70, Stocks: 65
-  };
-  const cost = costs[facility];
+  if (!Object.hasOwn(CAMP_FACILITY_COSTS, facility) || state.campFacilities.includes(facility)) return false;
+  const cost = CAMP_FACILITY_COSTS[facility];
   if (state.crowns < cost) return false;
   state.crowns -= cost;
   state.campFacilities.push(facility);
@@ -241,7 +298,10 @@ export function exploreTomb(state: GameState, tombId: string): { ok: boolean; me
   state.torches -= 1;
   tomb.roomsExplored += 1;
   awardPathXp(state, 'Mysteries and Wisdom', 6);
-  gainKnowledge(state, state.unlockedKnowledge.includes('old-languages') ? 30 : 18);
+  const scholar = bestProfessional(state, 'Scholar');
+  const knowledge = (state.unlockedKnowledge.includes('old-languages') ? 30 : 18) + (scholar?.profession!.level ?? 0) * 10;
+  gainKnowledge(state, knowledge);
+  if (scholar) awardProfessionXp(state, scholar, 20);
   if (tomb.roomsExplored % 2 === 0 && tomb.codices < 3) tomb.codices += 1;
   if (tomb.roomsExplored >= tomb.totalRooms) {
     tomb.completed = true;
@@ -251,7 +311,7 @@ export function exploreTomb(state: GameState, tombId: string): { ok: boolean; me
     state.inventory.push(relic);
     return { ok: true, message: `Tomb cleared. Recovered a relic and ${tomb.codices} codex fragments.` };
   }
-  return { ok: true, message: `Explored room ${tomb.roomsExplored}/${tomb.totalRooms}. Codices: ${tomb.codices}/3.` };
+  return { ok: true, message: `Explored room ${tomb.roomsExplored}/${tomb.totalRooms}. +${knowledge} knowledge${scholar ? ` · ${scholar.name} +20 Scholar XP` : ''}. Codices: ${tomb.codices}/3.` };
 }
 
 export const CORE_PARITY_FEATURES = [
@@ -305,7 +365,7 @@ export function availableSkills(className: string): string[] {
   return classSkills[className] ?? [];
 }
 
-const recipeCosts: Record<string, Record<string, number>> = {
+export const recipeCosts: Record<string, Record<string, number>> = {
   'Repair Kit': { iron: 1, wood: 1 },
   'Medicine': { herbs: 2, cloth: 1 },
   'Torch': { wood: 1, cloth: 1 },
@@ -313,17 +373,35 @@ const recipeCosts: Record<string, Record<string, number>> = {
   'Poison Oil': { herbs: 2, iron: 1 }
 };
 
-export function craftRecipe(state: GameState, recipe: string): boolean {
+export function craftRecipeStatus(state: GameState, recipe: string): { cost: ResourceCost; quantity: number; reason?: string; worker?: Mercenary } {
   ensureCoreSystems(state);
-  const cost = recipeCosts[recipe];
-  if (!cost) return false;
-  if (Object.entries(cost).some(([k,v]) => (state.materials[k] ?? 0) < v)) return false;
-  for (const [k,v] of Object.entries(cost)) state.materials[k] -= v;
-  if (recipe === 'Torch') state.torches += 2;
-  else if (recipe === 'Medicine') state.inventory.push({ id: `medicine-${Date.now()}`, name: 'Medicine', rarity: 'Common', value: 18, weight: 0.2 });
-  else if (recipe === 'Armor Reinforcement') state.inventory.push({ id: `reinforcement-${Date.now()}`, name: 'Armor Reinforcement', rarity: 'Uncommon', value: 35, armor: 2, weight: 0.5 });
-  else if (recipe === 'Poison Oil') state.inventory.push({ id: `poison-oil-${Date.now()}`, name: 'Poison Oil', rarity: 'Uncommon', value: 28, weight: 0.2 });
-  else state.inventory.push({ id: `repair-kit-${Date.now()}`, name: 'Repair Kit', rarity: 'Common', value: 14, weight: 0.5 });
+  if (!Object.hasOwn(recipeCosts, recipe)) return { cost: {}, quantity: 0, reason: 'Unknown recipe.' };
+  const materials = recipeCosts[recipe];
+  const profession = ['Medicine', 'Poison Oil'].includes(recipe) ? 'Alchemist' : 'Tinkerer';
+  const worker = bestProfessional(state, profession);
+  const level = worker?.profession!.level ?? 0;
+  const cost = { materials };
+  const reason = recipe !== 'Torch' && !worker ? `Assign a ${profession} in Company.`
+    : recipe === 'Armor Reinforcement' && level < 2 ? 'Requires a Lv 2 Tinkerer.'
+    : profession === 'Tinkerer' && !state.campFacilities.includes('Workshop') ? 'Build a Workshop first.'
+    : missingResources(state, cost);
+  const quantity = recipe === 'Torch' ? 2 + level : profession === 'Alchemist' && level >= 3 ? 2 : 1;
+  return { cost, quantity, worker, reason };
+}
+
+export function craftRecipe(state: GameState, recipe: string): boolean {
+  const status = craftRecipeStatus(state, recipe);
+  if (status.reason) return false;
+  spendResources(state, status.cost);
+  if (recipe === 'Torch') state.torches += status.quantity;
+  else for (let i = 0; i < status.quantity; i++) {
+    const id = `${recipe.toLowerCase().replaceAll(' ', '-')}-${crypto.randomUUID()}`;
+    if (recipe === 'Medicine') state.inventory.push({ id, name: 'Medicine', rarity: 'Common', value: 18, weight: 0.2 });
+    else if (recipe === 'Armor Reinforcement') state.inventory.push({ id, name: recipe, rarity: 'Uncommon', value: 35, armor: 2, weight: 0.5 });
+    else if (recipe === 'Poison Oil') state.inventory.push({ id, name: recipe, rarity: 'Uncommon', value: 28, weight: 0.2 });
+    else state.inventory.push({ id, name: 'Repair Kit', rarity: 'Common', value: 14, weight: 0.5 });
+  }
+  if (status.worker) awardProfessionXp(state, status.worker, 15);
   gainKnowledge(state, 8);
   return true;
 }
@@ -351,7 +429,9 @@ export function personalityFoodCost(state: GameState): number {
   ensureCoreSystems(state);
   const base = state.mercenaries.reduce((n,m)=>n + 2 + (m.traits.includes('Glutton') ? 1 : 0),0) + state.animals.length * 4;
   const cookingDiscount = state.campFacilities.includes('Cooking Pot') ? 2 : 0;
-  return Math.max(1, base - cookingDiscount - (state.unlockedKnowledge.includes('field-rations') ? 1 : 0));
+  const cookLevel = bestProfessional(state, 'Cook')?.profession!.level ?? 0;
+  const cookDiscount = cookLevel >= 4 ? 2 : cookLevel > 0 ? 1 : 0;
+  return Math.max(1, base - cookingDiscount - cookDiscount - (state.unlockedKnowledge.includes('field-rations') ? 1 : 0));
 }
 
 export function wageTotal(state: GameState): number {

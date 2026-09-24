@@ -1,3 +1,14 @@
+# Professions, exploration and equipment update
+
+- Replaced placeholder POI messages with enterable exploration screens for the Old Mill, Iron Mine, Bandit Camp, Ruined Keep and Old Battlefield. Added a field journal, automatic travel/entry, a nearby Enter button and an event-based E shortcut.
+- Added daily grain/timber/mining, one-time searches and locked caches, and persistent garrison victories. Every location remains revisitable; old discoveries do not block new interactions.
+- Made all seven professions affect production or exploration. Cooks reduce rest costs; Scholars improve tombs; Thieves open locks and reduce theft suspicion. Blacksmith work repairs the whole company.
+- Preserved each profession’s experience when switching jobs, with daily work shared across job changes. Failed work spends neither resources nor the daily action.
+- Added seven class-compatible equipment recipes and three upgrade tiers for both pack and equipped gear. Upgrades preserve item identity, existing armor bonuses and damage; changes affect combat stats immediately.
+- Added material suppliers, recipe output/cost/requirement previews, profession cards, forge tabs and transaction receipts. Corrected the six-button mobile navigation and kept workshop receipts clear of toast overlays.
+- Made missing base camp facilities buildable for legacy companies, added facility prices, and limited market theft to one attempt per settlement per day.
+- Added 43 rule tests and six browser scenarios covering trade production, every location, garrison victory, old saves, the mobile mine/forge/equip loop, and repeat-reward prevention. Current suite: 106 unit tests and 20 browser scenarios.
+
 # Tactical gameplay and interface update
 
 ## Fixes

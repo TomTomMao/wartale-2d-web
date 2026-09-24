@@ -28,6 +28,7 @@ test('mobile new game uses compact HUD and bottom navigation', async ({ page }) 
   expect(box).not.toBeNull();
   expect(box!.y + box!.height).toBeLessThanOrEqual(844);
   expect(box!.height).toBeGreaterThanOrEqual(50);
+  expect(box!.height).toBeLessThanOrEqual(85);
 
   await page.getByRole('button', { name: /Company/ }).tap();
   await expect(page.getByTestId('inventory-panel')).toBeVisible();
