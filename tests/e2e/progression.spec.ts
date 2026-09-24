@@ -75,6 +75,9 @@ test('mobile: assign trades, mine, forge, upgrade, equip and resume the same com
 });
 
 test('all map locations open and previously discovered sites stay explorable', async ({ page }) => {
+  // Eleven visits plus a save/reload exceed one interaction's budget on CI.
+  // Individual location assertions keep the normal 7-second responsiveness limit.
+  test.setTimeout(60_000);
   const s = fixture();
   s.discovered = LOCATIONS.map(l => l.id);
   // Simulate an existing save from before location progress and profession history.
