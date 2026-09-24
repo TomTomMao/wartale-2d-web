@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { LOCATIONS, WORLD_HEIGHT, WORLD_WIDTH } from './data';
-import { animalToBattleUnit, applyDamage, enemyBattleUnits, generateLoot, mercToBattleUnit, recordKill } from './domain';
+import { animalToBattleUnit, applyDamage, enemyBattleUnits, gainXp, generateLoot, mercToBattleUnit, recordKill } from './domain';
 import { getState, saveGame } from './store';
 import { awardPathXp, inflictInjury, travelStep } from './systems';
 import type { BattleUnit, MercClass, WorldEnemy } from './types';
@@ -31,7 +31,6 @@ export class GameScene extends Phaser.Scene {
   private selectedUnitId?: string;
   private encounterEnemy?: WorldEnemy;
   private round = 1;
-  private battleMessage?: Phaser.GameObjects.Text;
   private movementRange?: Phaser.GameObjects.Arc;
   private battleGrid?: GridLayout;
   private gridHighlights: Phaser.GameObjects.Rectangle[] = [];
@@ -39,11 +38,29 @@ export class GameScene extends Phaser.Scene {
   private selectedSkillId?: string;
   private temporaryValor = 0;
   private discoveryCooldown = new Set<string>();
+  private battlePhase: 'player' | 'resolving' | 'enemy' | 'finished' = 'player';
+  private battleLog: string[] = [];
+  private battleHint = '';
+  private pendingResize = false;
+  private hudElapsed = 0;
+  private encounterGraceUntil = 0;
+
+  private uiOpen(): boolean { return !!document.querySelector('#modal-root')?.childElementCount; }
+  private canAct(): boolean { return this.mode === 'battle' && this.battlePhase === 'player' && !this.uiOpen(); }
+
+  private lockAction(): void {
+    this.battlePhase = 'resolving';
+    this.clearGridHighlights();
+    this.refreshBattleHud();
+  }
+
 
   constructor() { super('game'); }
 
   create(): void {
     this.input.mouse?.disableContextMenu();
+    this.scale.on('resize', this.handleResize, this);
+    this.events.once('shutdown', () => this.scale.off('resize', this.handleResize, this));
     this.renderWorld();
   }
 
@@ -53,6 +70,12 @@ export class GameScene extends Phaser.Scene {
 
   renderWorld(): void {
     this.mode = 'world';
+    this.selectedUnitId = undefined;
+    this.selectedSkillId = undefined;
+    this.moveTarget = undefined;
+    this.input.removeAllListeners('pointerdown');
+    this.input.removeAllListeners('pointermove');
+    this.input.removeAllListeners('wheel');
     this.children.removeAll(true);
     this.enemySprites.clear();
     this.battleSprites.clear();
@@ -93,12 +116,12 @@ export class GameScene extends Phaser.Scene {
 
     this.keys = this.input.keyboard?.addKeys('W,A,S,D,I,C,Q,R,M,ESC,E') as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      if (this.mode !== 'world') return;
+      if (this.mode !== 'world' || this.uiOpen() || this.encounterEnemy) return;
       const world = p.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
       this.moveTarget = new Phaser.Math.Vector2(world.x, world.y);
     });
     this.input.on('wheel', (_p: Phaser.Input.Pointer, _objs: unknown[], _dx: number, dy: number) => {
-      if (this.mode !== 'world') return;
+      if (this.mode !== 'world' || this.uiOpen() || this.encounterEnemy) return;
       this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom - dy * 0.001, 0.65, 1.45));
     });
     this.emit({ type: 'world' });
@@ -128,6 +151,8 @@ export class GameScene extends Phaser.Scene {
     const marker = this.add.container(loc.x, loc.y, [art, label]).setDepth(10);
     marker.setSize(92, 82).setInteractive({ useHandCursor: true }).on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, ev: Phaser.Types.Input.EventData) => {
       ev.stopPropagation();
+      if (this.uiOpen() || this.encounterEnemy) return;
+      this.moveTarget = undefined;
       const state = getState();
       const dist = Phaser.Math.Distance.Between(state.worldX, state.worldY, loc.x, loc.y);
       if (town && dist < 150) this.emit({ type: 'town', townId: loc.id, townName: loc.name });
@@ -152,6 +177,14 @@ export class GameScene extends Phaser.Scene {
 
   update(_time: number, delta: number): void {
     if (this.mode !== 'world' || !this.party || !this.keys) return;
+    if (this.uiOpen() || this.encounterEnemy) {
+      this.moveTarget = undefined;
+      for (const child of this.party.list) if (child instanceof Phaser.GameObjects.Sprite) setWalk(child, false);
+      return;
+    }
+    delta = Math.min(delta, 80); // Returning from a background tab must not teleport the company.
+    this.hudElapsed += delta;
+    if (this.hudElapsed >= 500) { this.hudElapsed = 0; this.emit({ type: 'worldHud' }); }
     const state = getState();
     const speed = 180;
     let dx = 0, dy = 0;
@@ -253,7 +286,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private checkEncounter(): void {
-    if (this.encounterEnemy) return;
+    if (this.encounterEnemy || this.time.now < this.encounterGraceUntil) return;
     const state = getState();
     for (const e of state.enemies) {
       if (!e.alive) continue;
@@ -271,21 +304,25 @@ export class GameScene extends Phaser.Scene {
     if (!this.encounterEnemy) return;
     const e = this.encounterEnemy;
     const ang = Phaser.Math.Angle.Between(e.x, e.y, state.worldX, state.worldY);
-    state.worldX += Math.cos(ang) * 120;
-    state.worldY += Math.sin(ang) * 120;
+    state.worldX = Phaser.Math.Clamp(state.worldX + Math.cos(ang) * 180, 30, WORLD_WIDTH - 30);
+    state.worldY = Phaser.Math.Clamp(state.worldY + Math.sin(ang) * 180, 30, WORLD_HEIGHT - 30);
+    this.encounterGraceUntil = this.time.now + 5000;
     this.encounterEnemy = undefined;
     this.renderWorld();
   }
 
   startEncounterBattle(enemyId?: string): void {
     const e = enemyId ? getState().enemies.find(e => e.id === enemyId) : this.encounterEnemy;
-    if (!e) return;
+    if (!e || !e.alive || this.mode !== 'world') return;
     this.encounterEnemy = e;
     this.startBattle(e);
   }
 
   private startBattle(enemy: WorldEnemy): void {
     this.mode = 'battle';
+    this.battlePhase = 'player';
+    this.battleLog = [];
+    this.pendingResize = false;
     this.children.removeAll(true);
     this.enemySprites.clear();
     this.battleSprites.clear();
@@ -307,19 +344,25 @@ export class GameScene extends Phaser.Scene {
     const grid = this.battleGrid;
     const playerCells: GridCell[] = [];
     const enemyCells: GridCell[] = [];
-    for (let row = 0; row < grid.rows; row++) {
+    // Fill the central rows first so small companies face off in the middle.
+    const rows = Array.from({ length: grid.rows }, (_, row) => row)
+      .sort((a, b) => Math.abs(a - (grid.rows - 1) / 2) - Math.abs(b - (grid.rows - 1) / 2));
+    for (const row of rows) {
       playerCells.push({ col: 1, row });
-      if (grid.cols > 7) playerCells.push({ col: 2, row });
       enemyCells.push({ col: grid.cols - 2, row });
-      if (grid.cols > 7) enemyCells.push({ col: grid.cols - 3, row });
+    }
+    for (const row of rows) {
+      playerCells.push({ col: grid.cols > 7 ? 2 : 0, row });
+      enemyCells.push({ col: grid.cols - 1, row });
     }
 
-    this.battleUnits = state.mercenaries.slice(0, Math.min(6, playerCells.length)).map((m, i) => {
+    const deployedMercenaries = state.mercenaries.slice(0, Math.min(6, playerCells.length));
+    this.battleUnits = deployedMercenaries.map((m, i) => {
       const p = cellToWorld(grid, playerCells[i]);
       return mercToBattleUnit(m, p.x, p.y);
     });
-    this.battleUnits.push(...state.animals.slice(0, 2).map((a, i) => {
-      const cell = playerCells[Math.min(playerCells.length - 1, state.mercenaries.length + i)];
+    this.battleUnits.push(...state.animals.slice(0, Math.min(2, playerCells.length - deployedMercenaries.length)).map((a, i) => {
+      const cell = playerCells[deployedMercenaries.length + i];
       const p = cellToWorld(grid, cell);
       return animalToBattleUnit(a, p.x, p.y);
     }));
@@ -339,20 +382,53 @@ export class GameScene extends Phaser.Scene {
 
     this.round = 1;
     for (const unit of this.battleUnits) this.createBattleUnitSprite(unit);
-    this.battleMessage = this.add.text(w / 2, Math.max(28, grid.originY - 30), '', {
-      fontFamily: 'Georgia', fontSize: w < 700 ? '13px' : '18px', color: '#f6e8bf',
-      backgroundColor: '#1a1815dd', padding: { x: 10, y: 6 },
-      wordWrap: { width: Math.max(250, w - 40) }
-    }).setOrigin(0.5).setDepth(100);
-
-    this.refreshBattleHud();
-    this.showBattleMessage('Select a blue unit. Reachable grid cells will light up.');
     this.input.removeAllListeners('pointerdown');
     this.input.on('pointerdown', (p: Phaser.Input.Pointer, currentlyOver: Phaser.GameObjects.GameObject[]) => {
-      if (currentlyOver.length > 0) return;
+      if (currentlyOver.length > 0 || !this.canAct()) return;
       this.onBattlePointer(p);
     });
     this.emit({ type: 'battle', round: this.round });
+    this.showBattleMessage('Your turn. Blue tiles show movement; red tiles show enemies in range.');
+    this.selectNextUnit();
+  }
+
+  private handleResize(): void {
+    if (this.mode !== 'battle' || !this.battleGrid) return;
+    if (this.battlePhase === 'resolving' || this.battlePhase === 'enemy') { this.pendingResize = true; return; }
+    const cells = this.battleUnits.map(u => this.unitCell(u));
+    this.clearGridHighlights();
+    this.children.removeAll(true);
+    this.battleSprites.clear();
+    this.battleGrid = createGridLayout(this.scale.width, this.scale.height, this.battleGrid);
+    this.cameras.main.setBounds(0, 0, this.scale.width, this.scale.height);
+    drawPixelTerrain(this, this.scale.width, this.scale.height, 'battle').setDepth(-20);
+    this.drawBattleGrid();
+    this.battleUnits.forEach((unit, index) => {
+      if (cells[index]) Object.assign(unit, cellToWorld(this.battleGrid!, cells[index]!));
+      if (unit.health > 0) { this.createBattleUnitSprite(unit); this.updateBattleSprite(unit); }
+    });
+    this.pendingResize = false;
+    const selected = this.battleUnits.find(u => u.id === this.selectedUnitId);
+    if (selected && this.canAct()) this.drawMovementRange(selected);
+    this.refreshBattleHud();
+  }
+
+  selectUnit(id: string): void { this.onUnitClicked(id); }
+
+  selectNextUnit(): void {
+    if (!this.canAct()) return;
+    const units = this.battleUnits.filter(u => u.side === 'player' && u.health > 0 && !u.acted);
+    const current = units.findIndex(u => u.id === this.selectedUnitId);
+    if (units.length) this.onUnitClicked(units[(current + 1) % units.length].id);
+  }
+
+  cancelBattleSkill(): void {
+    if (!this.canAct()) return;
+    this.selectedSkillId = undefined;
+    const selected = this.battleUnits.find(u => u.id === this.selectedUnitId);
+    if (selected) this.drawMovementRange(selected);
+    this.showBattleMessage('Basic attack selected. Tap an enemy in range.');
+    this.refreshBattleHud();
   }
 
   private drawBattleGrid(): void {
@@ -457,25 +533,26 @@ export class GameScene extends Phaser.Scene {
     } else {
       kind = this.encounterEnemy?.kind === 'wolf' ? 'wolf' : this.encounterEnemy?.kind === 'raider' ? 'raider' : 'bandit';
     }
-    const actor = createActor(this, kind, 0, 2, 1.35).setName('actor');
+    const size = this.battleGrid?.cellSize ?? 64;
+    const actor = createActor(this, kind, 0, size * .24, size / 54).setName('actor');
     if (unit.mercenaryId) {
       const merc = getState().mercenaries.find(m => m.id === unit.mercenaryId);
       const tints = [0xffffff,0xffe0cf,0xd9f0ff,0xe9d4ff];
       actor.setTint(tints[merc?.appearanceVariant ?? 0] ?? 0xffffff);
     }
-    const label = this.add.text(0, -45, unit.name, {
-      fontFamily: 'monospace', fontSize: '13px', color: '#fff4d0',
+    const label = this.add.text(0, -size * .40, unit.name, {
+      fontFamily: 'monospace', fontSize: `${Math.max(8, Math.min(11, size / 6))}px`, color: '#fff4d0',
       backgroundColor: '#15120fdd', padding: { x: 4, y: 2 }
     }).setOrigin(0.5);
-    const hpBg = this.add.rectangle(0, 42, 60, 8, 0x24191a);
-    const hp = this.add.rectangle(-30, 42, 60, 8, 0xb4473f).setOrigin(0, 0.5).setName('hp');
-    const armor = this.add.rectangle(-30, 53, 60, 5, 0x5b88ad).setOrigin(0, 0.5).setName('armor');
-    const selection = this.add.rectangle(0, 5, 56, 65)
+    const hpBg = this.add.rectangle(0, size * .32, size * .75, 4, 0x24191a);
+    const hp = this.add.rectangle(-size * .375, size * .32, size * .75, 4, unit.side === 'player' ? 0x86bca1 : 0xd68973).setOrigin(0, 0.5).setName('hp');
+    const armor = this.add.rectangle(-size * .375, size * .42, size * .75, 3, 0x5b88ad).setOrigin(0, 0.5).setName('armor');
+    const selection = this.add.rectangle(0, 0, size - 6, size - 6)
       .setStrokeStyle(2, unit.side === 'player' ? 0x86c8ff : 0xdc7169, 0.75)
       .setFillStyle(0x000000, 0)
       .setName('selection');
     const c = this.add.container(unit.x, unit.y, [selection, actor, label, hpBg, hp, armor])
-      .setDepth(20).setSize(76, 108).setInteractive({ useHandCursor: true });
+      .setDepth(20).setSize(size - 4, size - 4).setInteractive({ useHandCursor: true });
     c.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, ev: Phaser.Types.Input.EventData) => {
       ev.stopPropagation();
       this.onUnitClicked(unit.id);
@@ -484,11 +561,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onUnitClicked(id: string): void {
+    if (!this.canAct()) return;
     const unit = this.battleUnits.find(u => u.id === id && u.health > 0);
     if (!unit) return;
 
     if (unit.side === 'player') {
-      if (unit.acted) return;
+      if (unit.acted) { this.showBattleMessage(`${unit.name} has already acted this round.`); return; }
       this.selectedUnitId = unit.id;
       this.selectedSkillId = undefined;
       this.drawMovementRange(unit);
@@ -522,6 +600,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   private performAttack(attacker: BattleUnit, target: BattleUnit, multiplier = 1, label = 'Attack', status?: string): void {
+    this.lockAction();
+    attacker.acted = true;
+    attacker.facing = target.x < attacker.x ? -1 : 1;
     const attackerSprite = this.battleSprites.get(attacker.id);
     const defenderSprite = this.battleSprites.get(target.id);
     const aa = attackerSprite?.getByName('actor');
@@ -534,21 +615,21 @@ export class GameScene extends Phaser.Scene {
     const backstab = (attacker.x < target.x && targetFacing === 1) || (attacker.x > target.x && targetFacing === -1);
     let dmg = Math.max(1, Math.round((attacker.power + Phaser.Math.Between(-2,3)) * multiplier));
     if (backstab) dmg = Math.ceil(dmg * 1.3);
+    const critical = Math.random() < attacker.crit;
+    if (critical) dmg = Math.ceil(dmg * 1.5);
+    const merc = getState().mercenaries.find(m => m.id === attacker.mercenaryId);
+    if (!status && merc?.weaponOil === 'Poison') status = 'Poison';
     if (status) target.statuses = Array.from(new Set([...(target.statuses ?? []),status]));
     this.time.delayedCall(150,()=>{
-      const wasDying = target.statuses?.includes('Dying') ?? false;
       applyDamage(target,dmg);
-      if (target.health <= 0 && !wasDying) {
-        target.health = 1;
-        target.statuses = Array.from(new Set([...(target.statuses ?? []),'Dying']));
-      } else if (wasDying && target.health <= 0) target.health = 0;
+      this.showDamage(target, dmg);
       if (da instanceof Phaser.GameObjects.Sprite) {
         da.setTintFill(0xffffff);
         playActor(da,target.health <= 0 ? 'death' : 'hurt',target.health > 0);
         this.time.delayedCall(90,()=>da.clearTint());
       }
       const aCell=this.unitCell(attacker),tCell=this.unitCell(target);
-      if (aCell && tCell && manhattan(aCell,tCell) === 1) {
+      if (target.health > 0 && aCell && tCell && manhattan(aCell,tCell) === 1) {
         const newlyEngaged = !attacker.engagedWithId;
         attacker.engagedWithId=target.id; target.engagedWithId=attacker.id;
         if (newlyEngaged) this.grantTemporaryValor(attacker, 'Engagement');
@@ -556,12 +637,14 @@ export class GameScene extends Phaser.Scene {
       if (target.health <= 0) this.grantTemporaryValor(attacker, 'Victory');
       attacker.acted=true;
       this.updateBattleSprite(target);
-      this.showBattleMessage(`${label}: ${attacker.name} hits ${target.name} for ${dmg}${backstab?' · BACKSTAB':''}${status?` · ${status}`:''}.`);
+      this.showBattleMessage(`${label}: ${attacker.name} hits ${target.name} for ${dmg}${critical?' · CRITICAL':''}${backstab?' · BACKSTAB':''}${status?` · ${status}`:''}.`);
       this.afterPlayerAction();
     });
   }
 
   selectBattleSkill(skillId: string): void {
+    if (!this.canAct()) return;
+    if (this.selectedSkillId === skillId) { this.cancelBattleSkill(); return; }
     const selected = this.battleUnits.find(u=>u.id===this.selectedUnitId && u.side==='player' && u.health>0 && !u.acted);
     if (!selected) return;
     const merc = getState().mercenaries.find(m=>m.id===selected.mercenaryId);
@@ -576,8 +659,8 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.selectedSkillId=skill.id;
-    this.clearGridHighlights();
-    this.showBattleMessage(`${skill.name}: tap an enemy in range.`);
+    this.drawMovementRange(selected);
+    this.showBattleMessage(`${skill.name}: ${skill.description} Tap an enemy.`);
     this.refreshBattleHud();
   }
 
@@ -589,7 +672,7 @@ export class GameScene extends Phaser.Scene {
       return !!a&&!!b&&manhattan(a,b)===1;
     });
     if (['whirlwind','cleave','sweep'].includes(skill.id)) {
-      for(const e of adjacentEnemies){ applyDamage(e,Math.max(1,Math.round(unit.power*.8))); this.updateBattleSprite(e); }
+      for(const e of adjacentEnemies){ applyDamage(e,Math.max(1,Math.round(unit.power*.8))); this.updateBattleSprite(e); if (e.health <= 0) this.grantTemporaryValor(unit, 'Victory'); }
       unit.acted=true;
     } else if (skill.id==='riposte') {
       unit.armor+=4; unit.statuses=Array.from(new Set([...(unit.statuses??[]),'Riposte'])); unit.acted=true;
@@ -603,6 +686,8 @@ export class GameScene extends Phaser.Scene {
     } else if (skill.id==='brace') {
       unit.armor+=5; unit.acted=true;
     } else if (skill.id==='smoke-bomb') {
+      const opponent = this.battleUnits.find(e => e.id === unit.engagedWithId);
+      if (opponent) opponent.engagedWithId = undefined;
       unit.engagedWithId=undefined; unit.statuses=Array.from(new Set([...(unit.statuses??[]),'Dodge'])); unit.moved=false;
       this.drawMovementRange(unit);
     }
@@ -636,7 +721,7 @@ export class GameScene extends Phaser.Scene {
         if(e.side!=='enemy'||e.health<=0)return false;
         const ec=this.unitCell(e); return !!ec&&manhattan(ec,t)<=1;
       });
-      for(const e of victims){applyDamage(e,Math.max(1,Math.round(attacker.power*.75)));this.updateBattleSprite(e);}
+      for(const e of victims){applyDamage(e,Math.max(1,Math.round(attacker.power*.75)));this.updateBattleSprite(e);if(e.health<=0)this.grantTemporaryValor(attacker, 'Victory');}
       attacker.acted=true;this.showBattleMessage(`Volley hits ${victims.length} enemies.`);this.afterPlayerAction();return;
     }
     let mult=1.15; let status:string|undefined;
@@ -659,6 +744,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private moveSelectedToCell(cell: GridCell): void {
+    if (!this.canAct()) return;
+    if (this.selectedSkillId) { this.showBattleMessage('Choose Basic attack to leave skill targeting and move.'); return; }
     const selected=this.battleUnits.find(u=>u.id===this.selectedUnitId&&u.side==='player'&&u.health>0&&!u.acted);
     if(!selected||selected.moved||!this.battleGrid)return;
     const start=this.unitCell(selected); if(!start)return;
@@ -670,7 +757,7 @@ export class GameScene extends Phaser.Scene {
       const opponent=this.battleUnits.find(u=>u.id===selected.engagedWithId&&u.health>0);
       if(opponent){applyDamage(selected,Math.max(1,Math.floor(opponent.power*.4)));this.updateBattleSprite(selected);opponent.engagedWithId=undefined;}
       selected.engagedWithId=undefined;
-      if(selected.health<=0){this.removeDeadUnits();this.checkBattleEnd();return;}
+      if(selected.health<=0){selected.acted=true;this.afterPlayerAction();return;}
     }
     const path=shortestPath(this.battleGrid,start,[cell],blocked,this.movementSteps(selected));
     const container=this.battleSprites.get(selected.id);
@@ -678,13 +765,18 @@ export class GameScene extends Phaser.Scene {
     if(actor instanceof Phaser.GameObjects.Sprite)setWalk(actor,true);
     this.clearGridHighlights();
 
+    this.lockAction();
+    selected.moved = true;
     let index=0;
     const step=()=>{
       if(index>=path.length){
         selected.moved=true;
         selected.statuses=selected.statuses?.filter(s=>s!=='Dash');
         if(actor instanceof Phaser.GameObjects.Sprite)setWalk(actor,false);
-        this.showBattleMessage(`${selected.name} moved ${path.length} grid cells.`);
+        this.battlePhase = 'player';
+        if (this.pendingResize) this.handleResize();
+        this.drawMovementRange(selected);
+        this.showBattleMessage(`${selected.name} moved ${path.length} cells. Attack a red target or use a skill.`);
         this.refreshBattleHud();return;
       }
       const world=cellToWorld(this.battleGrid!,path[index++]);
@@ -698,9 +790,9 @@ export class GameScene extends Phaser.Scene {
 
   private drawMovementRange(unit: BattleUnit): void {
     this.clearGridHighlights();
-    if(unit.moved||unit.acted||!this.battleGrid)return;
+    if(unit.acted||!this.battleGrid)return;
     const start=this.unitCell(unit); if(!start)return;
-    const reachable=reachableCells(this.battleGrid,start,this.movementSteps(unit),this.occupiedCells(unit.id));
+    const reachable = unit.moved || this.selectedSkillId ? new Map<string, number>() : reachableCells(this.battleGrid,start,this.movementSteps(unit),this.occupiedCells(unit.id));
     for(const key of reachable.keys()){
       const [col,row]=key.split(',').map(Number);
       const p=cellToWorld(this.battleGrid,{col,row});
@@ -711,10 +803,25 @@ export class GameScene extends Phaser.Scene {
       });
       this.gridHighlights.push(tile);
     }
+
+    for (const enemy of this.battleUnits.filter(u => u.side === 'enemy' && u.health > 0)) {
+      const targetCell = this.unitCell(enemy);
+      if (!targetCell || manhattan(start, targetCell) > this.attackRange(unit)) continue;
+      const tile = this.add.rectangle(enemy.x, enemy.y, this.battleGrid.cellSize - 4, this.battleGrid.cellSize - 4, 0xbc6659, .2)
+        .setStrokeStyle(2, 0xe59d79, .9).setDepth(5);
+      this.gridHighlights.push(tile);
+    }
+  }
+
+  private attackRange(unit: BattleUnit): number {
+    const merc = getState().mercenaries.find(m => m.id === unit.mercenaryId);
+    if (this.selectedSkillId) return ({'aimed-shot': 6, 'pinning-shot': 5, volley: 5, 'long-thrust': 3} as Record<string, number>)[this.selectedSkillId] ?? 1;
+    return (merc?.class === 'Ranger' ? 5 : merc?.class === 'Spearman' ? 2 : 1) + (merc?.learnedSkills.includes('Long Reach') ? 1 : 0);
   }
 
   endSelectedUnit(): void {
-    const selected = this.battleUnits.find(u => u.id === this.selectedUnitId && u.side === 'player' && u.health > 0);
+    if (!this.canAct()) return;
+    const selected = this.battleUnits.find(u => u.id === this.selectedUnitId && u.side === 'player' && u.health > 0 && !u.acted);
     if (!selected) return;
     selected.acted = true;
     this.clearGridHighlights();
@@ -724,7 +831,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   valorSkillSelected(): void {
-    const state = getState();
+    if (!this.canAct()) return;
     const selected = this.battleUnits.find(u => u.id === this.selectedUnitId && u.side === 'player' && u.health > 0 && !u.acted);
     if (!selected) return;
     if (!this.spendValor(1)) {
@@ -739,6 +846,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   guardSelectedUnit(): void {
+    if (!this.canAct()) return;
     const selected = this.battleUnits.find(u => u.id === this.selectedUnitId && u.side === 'player' && u.health > 0 && !u.acted);
     if (!selected) return;
     selected.armor = Math.min(selected.maxArmor + 5, selected.armor + 4);
@@ -752,6 +860,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private afterPlayerAction(): void {
+    this.battlePhase = 'player';
+    if (this.pendingResize) this.handleResize();
     const completedUnit = this.battleUnits.find(u => u.id === this.selectedUnitId && u.side === 'player');
     this.grantSupportValorIfEligible(completedUnit);
     this.clearGridHighlights();
@@ -762,66 +872,102 @@ export class GameScene extends Phaser.Scene {
     this.removeDeadUnits();
     if (this.checkBattleEnd()) return;
     const livingPlayers = this.battleUnits.filter(u => u.side === 'player' && u.health > 0);
-    if (livingPlayers.every(u => u.acted)) this.enemyTurn(); else this.refreshBattleHud();
+    if (livingPlayers.every(u => u.acted)) this.enemyTurn(); else { this.selectNextUnit(); this.refreshBattleHud(); }
   }
 
   private enemyTurn(): void {
-    if(!this.battleGrid)return;
-    const enemies=this.battleUnits.filter(u=>u.side==='enemy'&&u.health>0);
-    const players=this.battleUnits.filter(u=>u.side==='player'&&u.health>0);
-    for(const enemy of enemies){
-      if(enemy.statuses?.includes('Stunned')){
-        enemy.statuses=enemy.statuses.filter(s=>s!=='Stunned');
-        continue;
+    if (!this.battleGrid) return;
+    this.battlePhase = 'enemy';
+    this.showBattleMessage('Enemy turn. Watch their movement and prepare your next action.');
+    this.refreshBattleHud();
+    const enemies = this.battleUnits.filter(u => u.side === 'enemy' && u.health > 0);
+    const next = (index: number): void => {
+      if (this.battlePhase === 'finished') return;
+      this.removeDeadUnits();
+      if (this.checkBattleEnd()) return;
+      const enemy = enemies[index];
+      if (!enemy) { this.finishEnemyTurn(); return; }
+      if (enemy.health <= 0) { next(index + 1); return; }
+      if (enemy.statuses?.includes('Stunned')) {
+        enemy.statuses = enemy.statuses.filter(s => s !== 'Stunned');
+        this.showBattleMessage(`${enemy.name} is stunned and misses their turn.`);
+        this.time.delayedCall(240, () => next(index + 1));
+        return;
       }
-      const target=players.filter(p=>p.health>0).sort((a,b)=>{
-        const ac=this.unitCell(a),bc=this.unitCell(b),ec=this.unitCell(enemy);
-        return (!ac||!ec?99:manhattan(ec,ac))-(!bc||!ec?99:manhattan(ec,bc));
-      })[0];
-      if(!target)break;
-      const ec=this.unitCell(enemy),tc=this.unitCell(target);
-      if(!ec||!tc)continue;
+      const start = this.unitCell(enemy)!;
+      const blocked = this.occupiedCells(enemy.id);
+      const choices = this.battleUnits.filter(u => u.side === 'player' && u.health > 0).map(target => {
+        const cell = this.unitCell(target)!;
+        const distance = manhattan(start, cell);
+        const route = distance === 1 ? [] : shortestPath(this.battleGrid!, start, this.adjacentCells(cell).filter(g => !blocked.has(cellKey(g))), blocked);
+        return { target, route, score: distance === 1 ? 0 : route.length || Infinity };
+      }).sort((a, b) => a.score - b.score);
+      const choice = choices[0];
+      if (!choice) { this.checkBattleEnd(); return; }
+      const path = enemy.statuses?.includes('Rooted') ? [] : choice.route.slice(0, this.movementSteps(enemy));
+      enemy.statuses = enemy.statuses?.filter(s => s !== 'Rooted');
+      const sprite = this.battleSprites.get(enemy.id);
+      const actor = sprite?.getByName('actor');
+      let stepIndex = 0;
+      const step = (): void => {
+        if (stepIndex < path.length) {
+          const point = cellToWorld(this.battleGrid!, path[stepIndex++]);
+          enemy.facing = point.x < enemy.x ? -1 : 1;
+          Object.assign(enemy, point);
+          if (actor instanceof Phaser.GameObjects.Sprite) { setWalk(actor, true); actor.setFlipX(enemy.facing === -1); }
+          this.tweens.add({ targets: sprite, ...point, duration: 100, onComplete: step });
+          return;
+        }
+        if (actor instanceof Phaser.GameObjects.Sprite) setWalk(actor, false);
+        const target = choice.target;
+        if (target.health > 0 && manhattan(this.unitCell(enemy)!, this.unitCell(target)!) === 1) {
+          if (target.statuses?.includes('SpearWall')) {
+            applyDamage(enemy, Math.max(1, Math.round(target.power * .6)));
+            target.statuses = target.statuses.filter(s => s !== 'SpearWall');
+            this.updateBattleSprite(enemy);
+          }
+          // A spear wall can kill the attacker before its attack lands.
+          if (enemy.health > 0) {
+            let damage = Math.max(1, enemy.power + Phaser.Math.Between(-2, 2));
+            if (enemy.statuses?.includes('Weakened')) damage = Math.max(1, Math.floor(damage * .7));
+            if (target.statuses?.includes('Dodge')) damage = Math.max(1, Math.floor(damage * .55));
+            applyDamage(target, damage);
+            this.showDamage(target, damage);
+            this.updateBattleSprite(target);
+            if (actor instanceof Phaser.GameObjects.Sprite) { actor.setFlipX(target.x < enemy.x); playActor(actor, 'attack'); }
+            enemy.facing = target.x < enemy.x ? -1 : 1;
+            this.showBattleMessage(`${enemy.name} hits ${target.name} for ${damage}.`);
+            if (target.health > 0 && target.statuses?.includes('Riposte')) {
+              applyDamage(enemy, Math.max(1, Math.round(target.power * .5)));
+              this.updateBattleSprite(enemy);
+              target.statuses = target.statuses.filter(s => s !== 'Riposte');
+            }
+            if (target.health > 0 && enemy.health > 0) { enemy.engagedWithId = target.id; target.engagedWithId = enemy.id; }
+          }
+        }
+        this.refreshBattleHud();
+        this.time.delayedCall(260, () => next(index + 1));
+      };
+      step();
+    };
+    this.time.delayedCall(300, () => next(0));
+  }
 
-      let dist=manhattan(ec,tc);
-      if(dist>1 && !enemy.statuses?.includes('Rooted')){
-        const goals=this.adjacentCells(tc).filter(g=>!this.occupiedCells(enemy.id).has(cellKey(g)));
-        const blocked=this.occupiedCells(enemy.id);
-        const path=shortestPath(this.battleGrid,ec,goals,blocked,this.movementSteps(enemy));
-        const destination=path[Math.min(path.length,this.movementSteps(enemy))-1];
-        if(destination){
-          const world=cellToWorld(this.battleGrid,destination);
-          enemy.facing=world.x<enemy.x?-1:1;enemy.x=world.x;enemy.y=world.y;
-          this.battleSprites.get(enemy.id)?.setPosition(world.x,world.y);
-        }
-      }
-      enemy.statuses=enemy.statuses?.filter(s=>s!=='Rooted');
-      const ec2=this.unitCell(enemy),tc2=this.unitCell(target);
-      dist=ec2&&tc2?manhattan(ec2,tc2):99;
-      if(dist===1){
-        let dmg=Math.max(1,enemy.power+Phaser.Math.Between(-2,2));
-        if(enemy.statuses?.includes('Weakened'))dmg=Math.max(1,Math.floor(dmg*.7));
-        if(target.statuses?.includes('Dodge'))dmg=Math.max(1,Math.floor(dmg*.55));
-        if(target.statuses?.includes('SpearWall')){
-          applyDamage(enemy,Math.max(1,Math.round(target.power*.6)));this.updateBattleSprite(enemy);
-          target.statuses=target.statuses.filter(s=>s!=='SpearWall');
-        }
-        applyDamage(target,dmg);this.updateBattleSprite(target);
-        if(target.statuses?.includes('Riposte')){
-          applyDamage(enemy,Math.max(1,Math.round(target.power*.5)));this.updateBattleSprite(enemy);
-          target.statuses=target.statuses.filter(s=>s!=='Riposte');
-        }
-        enemy.engagedWithId=target.id;target.engagedWithId=enemy.id;
-      }
-    }
-    for(const u of this.battleUnits.filter(u=>u.health>0)){
-      let dot=0;if(u.statuses?.includes('Poison'))dot+=2;if(u.statuses?.includes('Bleeding'))dot+=3;
-      if(dot){u.health=Math.max(0,u.health-dot);this.updateBattleSprite(u);}
-      u.statuses=u.statuses?.filter(s=>s!=='Dodge');
+  private finishEnemyTurn(): void {
+    for (const unit of this.battleUnits.filter(u => u.health > 0)) {
+      const damage = (unit.statuses?.includes('Poison') ? 2 : 0) + (unit.statuses?.includes('Bleeding') ? 3 : 0);
+      if (damage) { unit.health = Math.max(0, unit.health - damage); this.updateBattleSprite(unit); }
+      unit.statuses = unit.statuses?.filter(s => s !== 'Dodge' && s !== 'Weakened');
     }
     this.removeDeadUnits();
-    if(this.checkBattleEnd())return;
-    this.round+=1;
-    for(const u of this.battleUnits.filter(u=>u.side==='player'&&u.health>0)){u.acted=false;u.moved=false;u.valorTriggeredThisTurn=false;}
+    if (this.checkBattleEnd()) return;
+    this.round += 1;
+    for (const unit of this.battleUnits.filter(u => u.side === 'player' && u.health > 0)) {
+      unit.acted = false; unit.moved = false; unit.valorTriggeredThisTurn = false;
+    }
+    this.battlePhase = 'player';
+    if (this.pendingResize) this.handleResize();
+    this.selectNextUnit();
     this.showBattleMessage(`Round ${this.round}. Your company may act.`);
     this.refreshBattleHud();
   }
@@ -845,9 +991,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private checkBattleEnd(): boolean {
+    if (this.battlePhase === 'finished') return true;
     const playersAlive = this.battleUnits.some(u => u.side === 'player' && u.health > 0);
     const enemiesAlive = this.battleUnits.some(u => u.side === 'enemy' && u.health > 0);
     if (!enemiesAlive) {
+      this.battlePhase = 'finished';
+      this.clearGridHighlights();
       this.syncBattleBackToState();
       const e = this.encounterEnemy;
       if (e) {
@@ -864,6 +1013,8 @@ export class GameScene extends Phaser.Scene {
           state.materials.cloth = (state.materials.cloth ?? 0) + 1;
         }
         recordKill(state, e.kind);
+        for (const m of state.mercenaries) gainXp(m, 35);
+        state.morale = Math.min(100, state.morale + 3);
         awardPathXp(state, 'Power and Glory', 8);
         saveGame();
         this.emit({ type: 'victory', crowns: loot.crowns, items: loot.items.map(i => i.name), enemyKind: e.kind });
@@ -871,6 +1022,9 @@ export class GameScene extends Phaser.Scene {
       return true;
     }
     if (!playersAlive) {
+      this.battlePhase = 'finished';
+      this.clearGridHighlights();
+      this.syncBattleBackToState();
       const state = getState();
       for (const m of state.mercenaries) { m.health = Math.max(1, Math.floor(m.maxHealth * 0.45)); m.armor = 0; }
       if (state.mercenaries[0]) inflictInjury(state, state.mercenaries[0].id);
@@ -892,8 +1046,8 @@ export class GameScene extends Phaser.Scene {
             state.mercenaries = state.mercenaries.filter(x => x.id !== m.id);
           } else {
             m.health = Math.max(1, bu.health);
-            m.armor = Math.max(0, bu.armor);
-            if (bu.statuses?.includes('Dying')) inflictInjury(state,m.id);
+            m.armor = Math.max(0, Math.min(m.maxArmor, bu.armor));
+            if (bu.health <= 0) inflictInjury(state,m.id);
           }
         }
       }
@@ -904,7 +1058,13 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  continueFromBattle(): void { this.encounterEnemy = undefined; this.renderWorld(); }
+  continueFromBattle(): void {
+    if (this.battlePhase !== 'finished') return;
+    this.encounterEnemy = undefined;
+    this.encounterGraceUntil = this.time.now + 5000;
+    this.temporaryValor = 0;
+    this.renderWorld();
+  }
 
   private refreshBattleHud(): void {
     const selected = this.battleUnits.find(u => u.id === this.selectedUnitId);
@@ -912,13 +1072,19 @@ export class GameScene extends Phaser.Scene {
     const merc = selected?.mercenaryId ? getState().mercenaries.find(m=>m.id===selected.mercenaryId) : undefined;
     const skills = battleSkillsFor(merc?.class);
     this.emit({
-      type:'battleHud',round:this.round,enemies,valor:getState().valor,tempValor:this.temporaryValor,totalValor:this.availableValor(),
-      selected:selected?{name:selected.name,health:selected.health,armor:selected.armor,moved:selected.moved,acted:selected.acted,className:merc?.class}:null,
+      type:'battleHud',phase:this.battlePhase,hint:this.battleHint,log:this.battleLog.slice(-4),
+      roster:this.battleUnits.filter(u=>u.side==='player').map(u=>({...u,className:getState().mercenaries.find(m=>m.id===u.mercenaryId)?.class ?? 'Wolf'})),
+      round:this.round,enemies,valor:getState().valor,tempValor:this.temporaryValor,totalValor:this.availableValor(),
+      selected:selected?{id:selected.id,name:selected.name,health:selected.health,armor:selected.armor,moved:selected.moved,acted:selected.acted,className:merc?.class,range:this.attackRange(selected),steps:this.movementSteps(selected),statuses:selected.statuses,engaged:!!selected.engagedWithId,valorStyle:merc?.valorStyle}:null,
       skills,selectedSkillId:this.selectedSkillId
     });
     for (const [id, sprite] of this.battleSprites.entries()) {
       const u = this.battleUnits.find(u => u.id === id);
-      if (u?.side === 'player' && u.health > 0) sprite.setScale(id === this.selectedUnitId ? 1.15 : 1);
+      if (u?.side === 'player' && u.health > 0) {
+        sprite.setAlpha(u.acted ? .55 : 1);
+        const outline = sprite.getByName('selection') as Phaser.GameObjects.Rectangle;
+        outline.setStrokeStyle(id === this.selectedUnitId ? 3 : 1, id === this.selectedUnitId ? 0xf1d48c : 0x86c8ff, 1);
+      }
     }
   }
 
@@ -927,11 +1093,24 @@ export class GameScene extends Phaser.Scene {
     if (!c) return;
     const hp = c.getByName('hp') as Phaser.GameObjects.Rectangle;
     const armor = c.getByName('armor') as Phaser.GameObjects.Rectangle;
-    hp.width = 56 * (Math.max(0, unit.health) / unit.maxHealth);
-    armor.width = unit.maxArmor ? 56 * (Math.max(0, unit.armor) / unit.maxArmor) : 0;
+    hp.width = (this.battleGrid!.cellSize * .75) * (Math.max(0, unit.health) / unit.maxHealth);
+    armor.width = unit.maxArmor ? (this.battleGrid!.cellSize * .75) * Math.min(1, Math.max(0, unit.armor) / unit.maxArmor) : 0;
   }
 
-  private showBattleMessage(message: string): void { this.battleMessage?.setText(message); }
+  private showDamage(unit: BattleUnit, amount: number): void {
+    const text = this.add.text(unit.x, unit.y - 15, `−${amount}`, {
+      fontFamily: 'Georgia', fontSize: '22px', fontStyle: 'bold',
+      color: unit.side === 'enemy' ? '#f2cc8a' : '#f0a28a', stroke: '#17231c', strokeThickness: 4
+    }).setOrigin(.5).setDepth(90);
+    this.tweens.add({ targets: text, y: unit.y - 52, alpha: 0, duration: 780, onComplete: () => text.destroy() });
+  }
+
+  private showBattleMessage(message: string): void {
+    this.battleHint = message;
+    this.battleLog.push(message);
+    this.battleLog = this.battleLog.slice(-20);
+    this.emit({ type: 'battleHint', message });
+  }
 
   testMovePartyTo(x: number, y: number): void {
     const state = getState(); state.worldX = x; state.worldY = y; this.party?.setPosition(x, y); this.checkDiscoveries();
@@ -944,11 +1123,13 @@ export class GameScene extends Phaser.Scene {
 
   testBattleSnapshot(): unknown {
     return {
+      phase: this.battlePhase, selectedUnitId: this.selectedUnitId, round: this.round,
+      pointerListeners: this.input.listenerCount('pointerdown'), wheelListeners: this.input.listenerCount('wheel'),
       grid: this.battleGrid ? { ...this.battleGrid } : null,
       obstacles: Array.from(this.battleObstacles),
       tempValor:this.temporaryValor,
       permanentValor:getState().valor,
-      units: this.battleUnits.map(u => ({ id:u.id,name:u.name,side:u.side,x:u.x,y:u.y,health:u.health,moved:u.moved,acted:u.acted,visible:this.battleSprites.has(u.id) }))
+      units: this.battleUnits.map(u => ({ id:u.id,name:u.name,side:u.side,x:u.x,y:u.y,health:u.health,armor:u.armor,statuses:u.statuses,moved:u.moved,acted:u.acted,visible:this.battleSprites.has(u.id) }))
     };
   }
 

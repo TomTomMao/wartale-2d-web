@@ -99,6 +99,20 @@ export function ensureActorAnimations(scene:Phaser.Scene){
 
 export function classToKind(cls:MercClass):ActorKind{return cls.toLowerCase() as ActorKind;}
 
+const portraits = new Map<string, string>();
+export function actorPortrait(className: string): string {
+  const kind = className.toLowerCase() as ActorKind;
+  if (portraits.has(kind)) return portraits.get(kind)!;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = frameSize;
+  const context = canvas.getContext('2d')!;
+  if (kind === 'wolf') drawWolf(context, 'idle', 0);
+  else drawHumanoid(context, kinds.includes(kind) ? kind as Exclude<ActorKind, 'wolf'> : 'swordsman', 'idle', 0);
+  const data = canvas.toDataURL();
+  portraits.set(kind, data);
+  return data;
+}
+
 export function createActor(scene:Phaser.Scene,kind:ActorKind,x=0,y=0,scale=1.4){
   ensureActorAnimations(scene);
   const sprite=scene.add.sprite(x,y,`${kind}-idle-0`).setScale(scale).setOrigin(.5,.78);
