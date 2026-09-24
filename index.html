@@ -2,7 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#101a1b" />
+    <meta name="description" content="Lead a mercenary company through a pixel-art frontier. Explore, trade and fight tactical grid battles in your browser." />
     <title>Ironbound Chronicles</title>
   </head>
   <body>
@@ -10,7 +12,7 @@
       <div id="game-root"></div>
       <div id="hud" class="hidden"></div>
       <div id="modal-root"></div>
-      <div id="toast-root"></div>
+      <div id="toast-root" role="status" aria-live="polite"></div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

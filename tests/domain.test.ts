@@ -25,9 +25,10 @@ describe('company systems', () => {
     const s = createInitialState();
     s.inventory.push(structuredClone(ITEMS.militiaSword));
     const m = s.mercenaries[0];
+    const oldWeapon = m.equipment.weapon;
     expect(equipItem(s, m.id, 'militia-sword')).toBe(true);
     expect(m.equipment.weapon?.name).toBe('Militia Sword');
-    expect(s.inventory.some(i => i.id === 'rusty-sword')).toBe(true);
+    expect(s.inventory).toContain(oldWeapon);
   });
   it('prevents purchases with insufficient money', () => {
     const s = createInitialState(); s.crowns = 5;

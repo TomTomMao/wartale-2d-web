@@ -1,15 +1,18 @@
 import Phaser from 'phaser';
 import './style.css';
+import { actorPortrait } from './animatedSprites';
+import { icon, escapeHtml } from './ui';
+import { LOCATIONS, WORLD_WIDTH, WORLD_HEIGHT } from './data';
 import { GameScene } from './game';
-import { acceptQuest, buyFood, canEquipItem, equipItem, recruit, repairAll, rest, sellItem, totalAttack, turnInQuest } from './domain';
+import { acceptQuest, buyFood, canEquipItem, equipItem, recruit, repairAll, rest, sellItem, totalAttack, turnInQuest, useItem } from './domain';
 import { getState, hasSave, loadGame, resetSave, saveGame, startNewGame } from './store';
 import {
   applyOrigin, applyPoisonOil, assignProfession, availableSkills, availableSpecializations, buildCampFacility, buyPony, buyRope, buyTradeGood, captureAnimal, capturePrisoner,
   carryingCapacity, changeRelationship, commitCrime, craftRecipe, ensureCoreSystems, exploreTomb,
-  cycleAppearance, healInjury, inventoryWeight, layLow, learnSkill, sellTradeGood, specializeMercenary, tradePrice,
+  cycleAppearance, healInjury, inventoryWeight, layLow, learnSkill, sellTradeGood, specializeMercenary, tradePrice, tradeSellPrice, personalityFoodCost, wageTotal,
   setValorStyle, turnInPrisoner, unlockKnowledge, workProfession
 } from './systems';
-import type { CampFacility, GameState, MercClass, Profession, ValorStyle } from './types';
+import type { BattleUnit, CampFacility, GameState, MercClass, Profession, ValorStyle } from './types';
 
 const hud = document.querySelector<HTMLDivElement>('#hud')!;
 const modal = document.querySelector<HTMLDivElement>('#modal-root')!;
@@ -18,15 +21,16 @@ const gameRoot = document.querySelector<HTMLDivElement>('#game-root')!;
 let game: Phaser.Game | null = null;
 let scene: GameScene | null = null;
 let currentTownName = 'Stonebridge';
+let lastBattleHud: BattleHudDetail | null = null;
 let currentVictoryKind: 'bandit' | 'wolf' | 'raider' | null = null;
 
 const professions: Profession[] = ['Tinkerer','Blacksmith','Cook','Alchemist','Miner','Scholar','Thief'];
 const facilities: CampFacility[] = ['Cooking Pot','Lectern','Strategy Table','Training Dummy','Stocks'];
 const knowledgeNodes = [
-  ['field-rations','Field Rations: +camp efficiency'],
-  ['nimble-fingers','Nimble Fingers: crime path perk'],
-  ['merchant-instinct','Merchant Instinct: trade path perk'],
-  ['old-languages','Old Languages: tomb research perk']
+  ['field-rations','Field Rations: rest costs 1 less food'],
+  ['nimble-fingers','Nimble Fingers: 20% less suspicion from crimes'],
+  ['merchant-instinct','Merchant Instinct: better trade sale prices'],
+  ['old-languages','Old Languages: +12 knowledge per tomb room']
 ] as const;
 
 function bootGame(): void {
@@ -56,57 +60,93 @@ function bootGame(): void {
   renderWorldHud();
 }
 
+function portrait(className: string, extra = ''): string {
+  return `<img class="portrait ${extra}" src="${actorPortrait(className)}" alt="" />`;
+}
+
+interface BattleHudDetail {
+  round: number;
+  phase: 'player' | 'resolving' | 'enemy' | 'finished';
+  enemies: number;
+  valor: number;
+  tempValor: number;
+  totalValor: number;
+  hint: string;
+  log: string[];
+  roster: (BattleUnit & { className: string })[];
+  selected: { id: string; name: string; health: number; armor: number; moved: boolean; acted: boolean; className?: string; range: number; steps: number; statuses: string[]; engaged: boolean; valorStyle?: string } | null;
+  skills: import('./battleSkills').BattleSkill[];
+  selectedSkillId?: string;
+}
+
 function button(label: string, action: string, cls = '', attrs = ''): string {
   return `<button class="btn ${cls}" data-action="${action}" ${attrs}>${label}</button>`;
 }
 
 function renderWorldHud(): void {
   const s = ensureCoreSystems(getState());
-  const weight = inventoryWeight(s);
-  const cap = carryingCapacity(s);
+  const foodCost = personalityFoodCost(s);
+  const quest = s.quests.find(q => q.state === 'active') ?? s.quests.find(q => q.state === 'available');
+  const objective = quest?.state === 'available' ? 'Your first contract' : quest ? (quest.progress >= quest.required ? 'Claim your reward' : 'Clear the eastern road') : 'The frontier awaits';
+  const objectiveText = quest?.state === 'available' ? 'Visit the contract board to earn your company’s first bounty.' : quest ? (quest.progress >= quest.required ? 'Your contract is complete. Collect the crowns and experience.' : 'Track down a bandit patrol east of Stonebridge.') : 'Explore a tomb, build your camp, or trade between settlements.';
+  const resource = (symbol: string, value: string | number, label: string, cls = '') => `<span class="resource-chip ${cls}" title="${label}">${icon(symbol)}<span><em data-resource="${label}">${value}</em><small>${label}</small></span></span>`;
   hud.innerHTML = `
     <div class="topbar world-topbar" data-testid="world-hud">
-      <div class="hud-brand">
-        <div class="company-mark">⚔</div>
-        <div class="hud-title"><strong>${s.companyName}</strong><span>Day ${s.day} · ${s.currentRegion}</span></div>
-      </div>
+      <div class="hud-brand"><div class="company-mark">${icon('sword')}</div><div class="hud-title"><strong>${escapeHtml(s.companyName)}</strong><span>DAY ${s.day} <i>·</i> <b class="live-region">${s.currentRegion}</b></span></div></div>
       <div class="resource-strip">
-        <span class="resource-chip"><b>👑</b><em>${s.crowns}</em></span>
-        <span class="resource-chip desktop-resource"><b>✦</b><em>${s.influence}</em></span>
-        <span class="resource-chip"><b>🍞</b><em>${s.food}</em></span>
-        <span class="resource-chip"><b>⚡</b><em>${Math.round(s.fatigue)}</em></span>
-        <span class="resource-chip desktop-resource"><b>⚔</b><em>${s.valor}/${s.maxValor}</em></span>
-        <span class="resource-chip wanted-chip"><b>⚖</b><em>${s.wantedLevel}</em></span>
-        <span class="resource-chip desktop-resource"><b>🎒</b><em>${weight.toFixed(1)}/${cap}</em></span>
+        ${resource('coin', s.crowns, 'Crowns')}${resource('food', s.food, 'Provisions')}${resource('bolt', `${Math.round(s.fatigue)}%`, 'Fatigue')}
+        ${resource('heart', s.morale, 'Morale', 'desktop-resource')}${resource('star', s.influence, 'Influence', 'desktop-resource')}
       </div>
+      <button class="help-btn" data-action="help" aria-label="How to play">${icon('help')}</button>
+    </div>
+    <aside class="world-objective"><span class="eyebrow">COMPANY JOURNAL</span><h3>${objective}</h3><p>${objectiveText}</p>
+      <button class="text-btn" data-action="${quest ? 'quests' : 'knowledge'}">${quest ? 'View contracts' : 'View knowledge'} ${icon('arrow')}</button>
+      <div class="supply-note ${s.food < foodCost ? 'low' : ''}">${icon('camp')} ${Math.floor(s.food / foodCost)} rests of provisions · ${foodCost} food / rest</div>
+    </aside>
+    <div class="world-map" aria-label="Map of the frontier"><span class="eyebrow">${s.currentRegion}</span>
+      <svg viewBox="0 0 160 110" role="img" aria-label="Your company and known settlements">
+        <path d="M18 48 34 41 52 38 73 45 105 59 135 85" fill="none" stroke="#7f7855" stroke-width="2"/>
+        <path d="M55 0 49 25 59 45 52 75 61 110" fill="none" stroke="#45666b" stroke-width="3"/>
+        ${LOCATIONS.filter(l=>l.type==='town').map(l=>`<rect x="${l.x/WORLD_WIDTH*160-2}" y="${l.y/WORLD_HEIGHT*110-2}" width="4" height="4" fill="#cbb985"/>`).join('')}
+        ${s.enemies.filter(e=>e.alive && Math.hypot(s.worldX-e.x,s.worldY-e.y)<550).map(e=>`<circle cx="${e.x/WORLD_WIDTH*160}" cy="${e.y/WORLD_HEIGHT*110}" r="2" fill="#da806a"/>`).join('')}
+        <circle class="map-company" cx="${s.worldX/WORLD_WIDTH*160}" cy="${s.worldY/WORLD_HEIGHT*110}" r="4" fill="#f4d18b" stroke="#fff6dc"/>
+      </svg><small>● Company <span>■ Settlement</span></small>
     </div>
     <div class="quickbar mobile-nav" data-testid="mobile-nav">
-      ${button('<span class="nav-icon">🛡</span><span class="nav-label">Company</span>', 'inventory', 'nav-btn')}
-      ${button('<span class="nav-icon">📜</span><span class="nav-label">Contracts</span>', 'quests', 'nav-btn')}
-      ${button('<span class="nav-icon">✦</span><span class="nav-label">Knowledge</span>', 'knowledge', 'nav-btn')}
-      ${button('<span class="nav-icon">🔥</span><span class="nav-label">Camp</span>', 'camp', 'nav-btn')}
-      ${button('<span class="nav-icon">💾</span><span class="nav-label">Save</span>', 'save', 'nav-btn')}
-    </div>
-  `;
+      ${[['shield','Company','inventory'],['scroll','Contracts','quests'],['star','Knowledge','knowledge'],['camp','Camp','camp'],['save','Save','save']].map(([symbol,label,action])=>button(`${icon(symbol)}<span class="nav-label">${label}</span>`, action, 'nav-btn')).join('')}
+    </div>`;
 }
 
-function renderBattleHud(detail: any): void {
+function renderBattleHud(detail: BattleHudDetail): void {
+  lastBattleHud = detail;
   const selected = detail.selected;
+  const ready = !!selected && !selected.acted && detail.phase === 'player';
+  const disabled = ready ? '' : 'disabled';
+  const phase = detail.phase === 'enemy' ? 'ENEMY TURN' : detail.phase === 'resolving' ? 'ACTION IN PROGRESS' : detail.phase === 'finished' ? 'BATTLE COMPLETE' : 'YOUR TURN';
+  const activeSkill = detail.skills.find(s => s.id === detail.selectedSkillId);
   hud.innerHTML = `
-    <div class="topbar battlebar" data-testid="battle-hud">
-      <div class="hud-brand"><div class="company-mark battle-mark">⚔</div><div class="hud-title"><strong>Round ${detail.round}</strong><span>${detail.enemies} enemies · 🟠 ${detail.valor ?? getState().valor} permanent · 🟡 ${detail.tempValor ?? 0} temporary</span></div></div>
-      <div class="selected-unit-card">${selected ? `<strong>${selected.name}</strong><span>❤ ${selected.health} &nbsp; ◆ ${selected.armor}</span>` : '<strong>Select a mercenary</strong><span>Tap a blue unit to begin</span>'}</div>
+    <div class="topbar battlebar" data-testid="battle-hud" data-phase="${detail.phase}">
+      <div class="hud-brand"><div class="company-mark battle-mark">${icon('sword')}</div><div class="hud-title"><strong>Round ${String(detail.round).padStart(2,'0')}</strong><span class="phase-label ${detail.phase}">${phase} · ${detail.enemies} enemies</span></div></div>
+      <div class="valor-meter" title="Temporary Valor is spent first. Generate it through Engagement, Victory or Support."><span class="eyebrow">COMPANY VALOR</span><strong><i class="valor-permanent">${detail.valor}</i> <small>+ ${detail.tempValor} temporary</small></strong></div>
+      <button class="help-btn" data-action="help" aria-label="How to play">${icon('help')}</button>
     </div>
-    <div class="battle-actions expanded-actions">
-      ${button('<span class="action-icon">✦</span><span>Rally</span><small>1 Valor</small>', 'valor-skill', !selected ? 'disabled-look action-btn' : 'action-btn')}
-      ${(detail.skills ?? []).map((s:any)=>button(
-        `<span class="action-icon">${s.icon}</span><span>${s.name}</span><small>${s.cost ? s.cost+' Valor' : 'Free'}</small>`,
-        'battle-skill',
-        (!selected ? 'disabled-look action-btn' : 'action-btn') + (detail.selectedSkillId===s.id?' selected-skill':''),
-        `data-skill="${s.id}" title="${s.description}"`
-      )).join('')}
-      ${button('<span class="action-icon">🛡</span><span>Guard</span>', 'guard', !selected ? 'disabled-look action-btn' : 'action-btn')}
-      ${button('<span class="action-icon">✓</span><span>End Unit</span>', 'end-unit', !selected ? 'disabled-look action-btn' : 'action-btn')}
+    <div class="battle-roster" aria-label="Company turn order">${detail.roster.map(u=>`<button class="roster-unit ${u.id===selected?.id?'is-selected':''} ${u.acted?'is-spent':''}" data-action="select-unit" data-unit="${u.id}" ${u.health<=0 || u.acted || detail.phase!=='player'?'disabled':''} aria-label="Select ${escapeHtml(u.name)}" aria-pressed="${u.id===selected?.id}">
+      ${portrait(u.className)}<span><strong>${escapeHtml(u.name)}</strong><small>${u.health<=0?'Fallen':u.acted?'Turn complete':`${u.health} HP · ${u.moved?'Moved':'Ready'}`}</small><i class="health-track"><i style="width:${Math.max(0,u.health/u.maxHealth)*100}%"></i></i></span>
+    </button>`).join('')}</div>
+    <div class="battle-command">
+      <div class="command-summary"><div>${selected ? `<strong>${escapeHtml(selected.name)}</strong> <span>${selected.className ?? 'Wolf'} · ${selected.moved?'Movement used':`${selected.steps} move`} · Range ${selected.range}${selected.engaged?' · Engaged: moving provokes a hit':''}</span>` : `<strong>${phase}</strong>`}</div><span class="grid-legend"><i></i> Move <i></i> Target</span></div>
+      <p class="battle-hint" role="status" data-testid="battle-hint">${escapeHtml(detail.hint || 'Select a mercenary to begin.')}</p>
+      <div class="command-controls">
+        <div class="battle-actions expanded-actions">
+          ${button(`${icon('sword')}<span>Basic attack</span><small>No Valor cost</small>`, 'basic-attack', `action-btn ${!activeSkill?'selected-skill':''}`, disabled)}
+          ${button(`${icon('star')}<span>Rally</span><small>1 Valor · buff</small>`, 'valor-skill', 'action-btn', !ready || detail.totalValor<1?'disabled':'')}
+          ${detail.skills.map(skill=>button(`${icon(skill.target==='enemy'?'target':'shield')}<span>${skill.name}</span><small>${skill.cost?skill.cost+' Valor':'Free'} · ${skill.target==='self'?'Self':'Target'}</small>`, 'battle-skill', `action-btn ${activeSkill?.id===skill.id?'selected-skill':''}`, `data-skill="${skill.id}" title="${skill.description}" ${!ready||detail.totalValor<skill.cost?'disabled':''}`)).join('')}
+        </div>
+        <div class="turn-actions">
+          ${button(`${icon('shield')}<span>Guard</span>`, 'guard', 'action-btn', disabled)}
+          ${button(`${icon('check')}<span>End Unit</span>`, 'end-unit', 'action-btn primary', disabled)}
+        </div>
+      </div>
     </div>`;
 }
 
@@ -123,22 +163,32 @@ function closeModal(): void { modal.innerHTML = ''; }
 function showMainMenu(): void {
   hud.classList.add('hidden');
   modal.innerHTML = `
-    <div class="fullscreen-menu parchment" data-testid="main-menu">
-      <div class="crest">⚔</div>
-      <h1>Ironbound Chronicles</h1>
-      <p class="subtitle">A mercenary company tactical RPG</p>
-      ${button('New Company', 'new-game', 'primary')}
-      <button class="btn" data-action="continue" data-testid="continue-button" ${hasSave() ? '' : 'disabled'}>Continue</button>
-      <div class="small-note">Explore, take contracts, manage professions, trade, evade the law, raid tombs and survive as a mercenary company.</div>
+    <div class="fullscreen-menu title-menu" data-testid="main-menu">
+      <div class="menu-art" aria-hidden="true"><div class="moon"></div><div class="mountains distant"></div><div class="mountains near"></div><div class="menu-party">${portrait('Ranger')}${portrait('Swordsman')}${portrait('Warrior')}</div><span>THE GREENMARCH FRONTIER</span></div>
+      <div class="menu-copy"><span class="eyebrow">A COMPANY. A CONTRACT. A LEGEND.</span><h1>Ironbound<br/><em>Chronicles</em></h1><p class="subtitle">Fortune favours the prepared.</p>
+      <p class="menu-description">Lead your company across an untamed frontier. Take contracts, build your camp, and make every turn count.</p>
+      ${button('New Company '+icon('arrow'), 'new-game', 'primary')}
+      <button class="btn continue-btn" data-action="continue" data-testid="continue-button" ${hasSave() ? '' : 'disabled'}>Continue your journey</button>
+      <div class="menu-foot"><span>TACTICAL RPG</span><span>DESKTOP & MOBILE</span></div></div>
     </div>`;
+}
+
+function showHelp(): void {
+  modal.innerHTML = `<div class="panel help-panel"><header><div><span class="eyebrow">FIELD MANUAL</span><h2>Make every turn count</h2></div><button class="x" data-action="close" aria-label="Close help">×</button></header>
+    <div class="help-step"><b>01</b><div><h3>Explore the frontier</h3><p>Tap the ground or use WASD to travel. Tap a nearby settlement to enter. Menus pause world travel and hostile patrols.</p></div></div>
+    <div class="help-step"><b>02</b><div><h3>Move, then act</h3><p>Select a mercenary from the field or roster. Blue cells are reachable; red cells contain enemies in range. Each unit gets one move and one action per round. Allies, enemies and obstacles block movement.</p></div></div>
+    <div class="help-step"><b>03</b><div><h3>Spend and earn Valor</h3><p>Skills use shared Valor. Temporary points are spent first. Engagement earns a point when engaging an enemy; Victory on a kill; Support when ending beside an ally while unengaged. Each mercenary can trigger their chosen style once per round.</p></div></div>
+    <div class="help-step"><b>04</b><div><h3>Keep the company ready</h3><p>Guard grants armor and ends a turn. Leaving an engagement provokes a hit. Camp restores health and Valor; it consumes food and wages every third rest. Convert food in your pack into provisions before resting.</p></div></div>
+    <div class="shortcut-row"><span><kbd>I</kbd> Company</span><span><kbd>Q</kbd> Contracts</span><span><kbd>R</kbd> Camp</span><span><kbd>N</kbd> Next unit</span><span><kbd>Space</kbd> End unit</span><span><kbd>Esc</kbd> Close / cancel skill</span></div>
+  </div>`;
 }
 
 function showNewGame(): void {
   modal.innerHTML = `
-    <div class="fullscreen-menu parchment" data-testid="new-game-form">
+    <div class="fullscreen-menu parchment creation-menu" data-testid="new-game-form"><span class="eyebrow">WRITE YOUR COMPANY’S STORY</span>
       <h2>Found a Mercenary Company</h2>
       <label>Company name<input id="company-name" value="Iron Wolves" maxlength="28" /></label>
-      <label>Starting leader<select id="leader-class"><option>Swordsman</option><option>Warrior</option><option>Ranger</option></select></label>
+      <label>Starting leader<select id="leader-class"><option>Swordsman</option><option>Warrior</option><option>Ranger</option><option>Spearman</option><option>Rogue</option></select></label>
       <label>Background<select id="origin"><option selected>Wandering Friends</option><option>Disgraced Guards</option><option>Road Traders</option></select></label>
       <label>Difficulty<select id="difficulty"><option>Easy</option><option selected>Normal</option><option>Hard</option></select></label>
       <label>Exploration<select id="exploration-mode"><option selected>Adaptive</option><option>Region Locked</option></select></label>
@@ -153,13 +203,15 @@ function showInventory(): void {
   const mercs = s.mercenaries.map(m => {
     const relation = s.mercenaries.filter(o=>o.id!==m.id).map(o => `${o.name}: ${m.relations[o.id] ?? 0}`).join(' · ');
     return `<div class="merc-card">
-      <strong>${m.name}</strong><span>${m.class} · Lv ${m.level}</span>
-      <span>HP ${m.health}/${m.maxHealth} · Armor ${m.armor}/${m.maxArmor} · Attack ${totalAttack(m)}</span>
+      <div class="merc-heading">${portrait(m.class)}<div><strong>${escapeHtml(m.name)}</strong><span>${m.class} <b>LV ${m.level}</b></span></div></div>
+      <div class="merc-stats"><span>${icon('heart')} ${m.health}/${m.maxHealth}</span><span>${icon('shield')} ${m.armor}/${m.maxArmor}</span><span>${icon('sword')} ${totalAttack(m)}</span></div>
+      <div class="xp-track"><i style="width:${Math.min(100,m.xp/(100+(m.level-1)*80)*100)}%"></i></div><span>${m.xp} / ${100+(m.level-1)*80} XP to next level</span>
       <span>Weapon: ${m.equipment.weapon?.name ?? 'None'} · Armor: ${m.equipment.armor?.name ?? 'None'}</span>
+      <details class="merc-details"><summary>Training, profession & equipment care</summary>
       <span>Profession: ${m.profession ? `${m.profession.name} Lv ${m.profession.level} (${m.profession.xp} XP)` : 'Unassigned'}</span>
       <div>
         ${professions.map(p=>`<button class="mini" data-action="assign-profession" data-merc="${m.id}" data-profession="${p}">${p}</button>`).join('')}
-        ${m.profession ? `<button class="mini" data-action="work-profession" data-merc="${m.id}">Work</button>` : ''}
+        ${m.profession ? `<button class="mini" data-action="work-profession" data-merc="${m.id}" ${m.lastWorkedDay===s.day?'disabled':''}>${m.lastWorkedDay===s.day?'Rest to work again':'Work · once per day'}</button>` : ''}
       </div>
       <span>Specialization: ${m.specialization ?? (m.level >= 3 ? 'Choose one' : 'Unlocks at Lv 3')}</span>
       <div>${!m.specialization && m.level>=3 ? availableSpecializations(m.class).map(sp=>`<button class="mini" data-action="specialize" data-merc="${m.id}" data-specialization="${sp}">${sp}</button>`).join('') : ''}</div>
@@ -174,7 +226,7 @@ function showInventory(): void {
       <div><button class="mini" data-action="cycle-appearance" data-merc="${m.id}">Change Look</button>
       ${s.inventory.some(i=>i.name==='Poison Oil') && m.equipment.weapon ? `<button class="mini" data-action="apply-oil" data-merc="${m.id}">Apply Poison Oil</button>` : ''}</div>
       ${m.injury ? `<button class="mini" data-action="heal-injury" data-merc="${m.id}">Use Medicine</button>` : ''}
-      <span>Relations: ${relation || 'No bonds yet'}</span>
+      <span>Relations: ${relation || 'No bonds yet'}</span></details>
     </div>`;
   }).join('');
   const items = s.inventory.map(i => {
@@ -186,7 +238,7 @@ function showInventory(): void {
       : '';
     return `<div class="item-row rarity-${i.rarity.toLowerCase()}">
       <div><strong>${i.name}</strong><span>${i.rarity}${i.power ? ` · +${i.power} power` : ''}${i.armor ? ` · +${i.armor} armor` : ''} · ${i.weight ?? 1} wt</span></div>
-      <div class="item-actions"><div class="equip-targets">${equipButtons}</div><button class="mini" data-action="sell" data-item-id="${i.id}">Sell ${Math.floor(i.value * .55)}</button></div>
+      <div class="item-actions"><div class="equip-targets">${equipButtons}${i.food?`<button class="mini" data-action="use-item" data-item-id="${i.id}">Add ${i.food} provisions</button>`:''}${['Repair Kit','Armor Reinforcement'].includes(i.name)?s.mercenaries.map(m=>`<button class="mini" data-action="use-item" data-item-id="${i.id}" data-merc="${m.id}">Use → ${escapeHtml(m.name)}</button>`).join(''):''}</div><button class="mini" data-action="sell" data-item-id="${i.id}">Sell ${Math.floor(i.value * .55)}</button></div>
     </div>`;
   }).join('') || '<p>Inventory empty.</p>';
   modal.innerHTML = `<div class="panel wide" data-testid="inventory-panel"><header><h2>Company · ${inventoryWeight(s).toFixed(1)}/${carryingCapacity(s)} weight</h2><button class="x" data-action="close">×</button></header><div class="two-col"><section><h3>Mercenaries & Professions</h3>${mercs}</section><section><h3>Pack</h3>${items}</section></div></div>`;
@@ -211,11 +263,11 @@ function showQuests(): void {
 
 function showCamp(): void {
   const s = ensureCoreSystems(getState());
-  const wages = s.mercenaries.reduce((n,m)=>n+m.wage,0);
+  const wages = wageTotal(s);
   const build = facilities.filter(f=>!s.campFacilities.includes(f)).map(f => button(`Build ${f}`, 'build-facility', '', `data-facility="${f}"`)).join('');
   modal.innerHTML = `<div class="panel camp-panel wide" data-testid="camp-panel"><header><h2>Company Camp</h2><button class="x" data-action="close">×</button></header>
     <div class="camp-art"><div class="fire">🔥</div>${s.mercenaries.slice(0,6).map((m,i)=>`<div class="camper c${i}">◆<span>${m.name}</span></div>`).join('')}</div>
-    <p>Fatigue <strong>${Math.round(s.fatigue)}/${s.maxFatigue}</strong> · Valor <strong>${s.valor}/${s.maxValor}</strong>. Rest costs <strong>${s.mercenaries.length * 2 + s.animals.length * 4} food</strong>; wages <strong>${wages}</strong> every third rest.</p>
+    <p>Fatigue <strong>${Math.round(s.fatigue)}/${s.maxFatigue}</strong> · Valor <strong>${s.valor}/${s.maxValor}</strong>. Rest costs <strong>${personalityFoodCost(s)} food</strong>; wages <strong>${wages}</strong> every third rest.</p>
     <p>Animals: ${s.animals.map(a=>`${a.name} HP ${a.health}/${a.maxHealth}`).join(', ') || 'None'} · Ropes: ${s.ropes}</p>
     <p>Facilities: ${s.campFacilities.join(', ')}</p>
     <p>Materials: Iron ${s.materials.iron ?? 0} · Leather ${s.materials.leather ?? 0} · Wood ${s.materials.wood ?? 0} · Herbs ${s.materials.herbs ?? 0} · Cloth ${s.materials.cloth ?? 0} · Torches ${s.torches}</p>
@@ -229,7 +281,7 @@ function showTown(name: string): void {
   currentTownName = name;
   const s = ensureCoreSystems(getState());
   const q = s.quests[0];
-  const trade = ['wool','salt','spice'].map(g=>`<div class="item-row"><div><strong>${g}</strong><span>Price ${tradePrice(s.currentRegion,g)} · Held ${s.tradeGoods[g] ?? 0}</span></div><div><button class="mini" data-action="buy-trade" data-good="${g}">Buy</button><button class="mini" data-action="sell-trade" data-good="${g}">Sell</button></div></div>`).join('');
+  const trade = ['wool','salt','spice'].map(g=>`<div class="item-row"><div><strong>${g}</strong><span>Buy ${tradePrice(s.currentRegion,g)} · Sell ${tradeSellPrice(s.currentRegion,g,s.unlockedKnowledge.includes('merchant-instinct'))} · Held ${s.tradeGoods[g] ?? 0}</span></div><div><button class="mini" data-action="buy-trade" data-good="${g}">Buy</button><button class="mini" data-action="sell-trade" data-good="${g}">Sell</button></div></div>`).join('');
   const prisoners = s.prisoners.map(p=>`<button class="mini" data-action="turn-prisoner" data-prisoner="${p.id}">Turn in ${p.name} (+${p.bounty})</button>`).join('') || '<span class="muted">No prisoners.</span>';
   modal.innerHTML = `<div class="panel wide town-panel" data-testid="town-panel"><header><div><small>Settlement · ${s.currentRegion}</small><h2>${name}</h2></div><button class="x" data-action="close">×</button></header>
     <div class="town-grid">
@@ -264,7 +316,7 @@ function showVictory(detail: any): void {
 }
 
 function showDefeat(): void {
-  modal.innerHTML = `<div class="panel victory"><h2>Defeat</h2><p>Your wounded company escapes, losing 30 crowns.</p>${button('Return to world', 'continue-battle', 'primary')}</div>`;
+  modal.innerHTML = `<div class="panel victory"><h2>Defeat</h2><p>${getState().mercenaries.length ? 'Your surviving company escapes, losing up to 30 crowns.' : 'Your company has fallen. Their story ends here.'}</p>${getState().mercenaries.length ? button('Return to world', 'continue-battle', 'primary') : button('Found a new company', 'new-game', 'primary')}</div>`;
 }
 
 function exposeTestApi(): void {
@@ -285,7 +337,19 @@ function exposeTestApi(): void {
 
 window.addEventListener('ironbound:ui', (ev: Event) => {
   const d = (ev as CustomEvent).detail;
-  if (d.type === 'world') { closeModal(); renderWorldHud(); }
+  if (d.type === 'world') { lastBattleHud = null; closeModal(); renderWorldHud(); }
+  if (d.type === 'worldHud' && !lastBattleHud) {
+    const state = getState();
+    const fatigue = hud.querySelector('[data-resource="Fatigue"]');
+    if (fatigue) fatigue.textContent = `${Math.round(state.fatigue)}%`;
+    const morale = hud.querySelector('[data-resource="Morale"]');
+    if (morale) morale.textContent = String(Math.floor(state.morale));
+    hud.querySelectorAll('.live-region, .world-map>.eyebrow').forEach(el => el.textContent = state.currentRegion);
+    const marker = hud.querySelector('.map-company');
+    marker?.setAttribute('cx', String(state.worldX/WORLD_WIDTH*160));
+    marker?.setAttribute('cy', String(state.worldY/WORLD_HEIGHT*110));
+  }
+  if (d.type === 'battleHint') { const hint = hud.querySelector('.battle-hint'); if (hint) hint.textContent = d.message; }
   if (d.type === 'toast') showToast(d.message);
   if (d.type === 'inventory') showInventory();
   if (d.type === 'quests') showQuests();
@@ -293,28 +357,46 @@ window.addEventListener('ironbound:ui', (ev: Event) => {
   if (d.type === 'town') showTown(d.townName);
   if (d.type === 'tomb') showTomb(d.tombId,d.tombName);
   if (d.type === 'encounter') showEncounter(d.enemy);
-  if (d.type === 'battle') { closeModal(); renderBattleHud({round:d.round,enemies:0,valor:getState().valor,selected:null}); }
+  if (d.type === 'battle') closeModal();
   if (d.type === 'battleHud') renderBattleHud(d);
   if (d.type === 'victory') showVictory(d);
   if (d.type === 'defeat') showDefeat();
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.code === 'Space' && scene) { e.preventDefault(); scene.endSelectedUnit(); }
-  if (e.key === 'Escape' && modal.innerHTML) closeModal();
+  if (e.target instanceof HTMLElement && e.target.closest('input, select, textarea, [contenteditable]')) return;
+  if (e.key === 'Escape') {
+    if (modal.querySelector('.panel:not(.encounter):not(.victory)')) closeModal();
+    else if (!modal.childElementCount) scene?.cancelBattleSkill();
+  }
+  if (e.key === 'Tab' && modal.childElementCount) {
+    const focusable = Array.from(modal.querySelectorAll<HTMLElement>('button:not(:disabled), input, select, summary, [tabindex="0"]')).filter(el => el.getClientRects().length);
+    const index = focusable.indexOf(document.activeElement as HTMLElement);
+    if (index < 0 || (!e.shiftKey && index === focusable.length-1) || (e.shiftKey && index === 0)) {
+      e.preventDefault(); (e.shiftKey ? focusable.at(-1) : focusable[0])?.focus();
+    }
+  }
+  if (modal.childElementCount || !lastBattleHud || e.repeat) return;
+  if (e.code === 'Space') { e.preventDefault(); scene?.endSelectedUnit(); }
+  if (e.key.toLowerCase() === 'n') scene?.selectNextUnit();
 });
 
 document.addEventListener('click', (e) => {
   const target = (e.target as HTMLElement).closest<HTMLElement>('[data-action]');
-  if (!target) return;
+  if (!target || (target instanceof HTMLButtonElement && target.disabled)) return;
   const action = target.dataset.action!;
   const s = ensureCoreSystems(getState());
 
   if (action === 'new-game') showNewGame();
   else if (action === 'main-menu') showMainMenu();
-  else if (action === 'continue') { if (loadGame()) { closeModal(); bootGame(); } }
+  else if (action === 'continue') {
+    const loaded = loadGame();
+    if (!loaded) showToast('This save could not be loaded. Start a new company to play.');
+    else if (!loaded.mercenaries.length) showDefeat();
+    else { closeModal(); bootGame(); }
+  }
   else if (action === 'start-game') {
-    const company = (document.querySelector<HTMLInputElement>('#company-name')?.value || 'Iron Wolves').trim();
+    const company = (document.querySelector<HTMLInputElement>('#company-name')?.value || 'Iron Wolves').trim() || 'Iron Wolves';
     const cls = document.querySelector<HTMLSelectElement>('#leader-class')!.value as MercClass;
     const origin = document.querySelector<HTMLSelectElement>('#origin')!.value as GameState['origin'];
     const difficulty = document.querySelector<HTMLSelectElement>('#difficulty')!.value as GameState['difficulty'];
@@ -332,7 +414,10 @@ document.addEventListener('click', (e) => {
   else if (action === 'knowledge') showKnowledge();
   else if (action === 'camp') showCamp();
   else if (action === 'close') closeModal();
-  else if (action === 'save') { saveGame(); showToast('Game saved.'); }
+  else if (action === 'help') showHelp();
+  else if (action === 'save') showToast(saveGame() ? 'Journey saved.' : 'Unable to save. Browser storage may be full or disabled.');
+  else if (action === 'select-unit') scene?.selectUnit(target.dataset.unit!);
+  else if (action === 'basic-attack') scene?.cancelBattleSkill();
   else if (action === 'valor-skill') scene?.valorSkillSelected();
   else if (action === 'battle-skill') scene?.selectBattleSkill(target.dataset.skill!);
   else if (action === 'guard') scene?.guardSelectedUnit();
@@ -409,11 +494,28 @@ document.addEventListener('click', (e) => {
     }
     showInventory(); renderWorldHud();
   }
+  else if (action === 'use-item') {
+    showToast(useItem(s, target.dataset.itemId!, target.dataset.merc) ? 'Supplies used.' : 'This mercenary does not need repairs.');
+    saveGame(); showInventory(); renderWorldHud();
+  }
   else if (action === 'sell') {
     const item=s.inventory.find(i => i.id === target.dataset.itemId);
     if(item){const earned=sellItem(s,item.id);saveGame();showToast(`Sold ${item.name} for ${earned} crowns.`);}
     showInventory(); renderWorldHud();
   }
+  if (game && !lastBattleHud) renderWorldHud();
 });
+
+const modalObserver = new MutationObserver(() => {
+  const panel = modal.firstElementChild;
+  hud.inert = !!panel;
+  gameRoot.inert = !!panel;
+  if (!panel) return;
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-modal', 'true');
+  const heading = panel.querySelector('h1, h2');
+  if (heading) { heading.id = 'dialog-title'; panel.setAttribute('aria-labelledby', 'dialog-title'); }
+});
+modalObserver.observe(modal, { childList: true });
 
 showMainMenu();

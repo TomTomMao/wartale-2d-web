@@ -16,16 +16,22 @@ export function startNewGame(company: string, cls: MercClass, difficulty: GameSt
   return state;
 }
 
-export function saveGame(): void {
-  if (state) localStorage.setItem(SAVE_KEY, serializeState(state));
+export function saveGame(): boolean {
+  try {
+    if (state) localStorage.setItem(SAVE_KEY, serializeState(state));
+    return !!state;
+  } catch {
+    return false;
+  }
 }
 
 export function hasSave(): boolean {
-  return localStorage.getItem(SAVE_KEY) !== null;
+  try { return localStorage.getItem(SAVE_KEY) !== null; } catch { return false; }
 }
 
 export function loadGame(): GameState | null {
-  const raw = localStorage.getItem(SAVE_KEY);
+  let raw: string | null;
+  try { raw = localStorage.getItem(SAVE_KEY); } catch { return null; }
   if (!raw) return null;
   const loaded = deserializeState(raw);
   if (loaded) state = ensureCoreSystems(loaded);
@@ -33,7 +39,7 @@ export function loadGame(): GameState | null {
 }
 
 export function resetSave(): void {
-  localStorage.removeItem(SAVE_KEY);
+  try { localStorage.removeItem(SAVE_KEY); } catch { /* In-memory reset still works. */ }
   state = null;
 }
 

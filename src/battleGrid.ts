@@ -9,13 +9,14 @@ export interface GridLayout {
 
 export function cellKey(cell: GridCell): string { return `${cell.col},${cell.row}`; }
 
-export function createGridLayout(width: number, height: number): GridLayout {
-  const compact = width < 700;
-  const cellSize = compact ? 48 : 64;
-  const top = compact ? 92 : 112;
-  const bottom = compact ? 96 : 100;
-  const cols = Math.max(6, Math.min(14, Math.floor((width - 24) / cellSize)));
-  const rows = Math.max(5, Math.min(9, Math.floor((height - top - bottom) / cellSize)));
+export function createGridLayout(width: number, height: number, dimensions?: Pick<GridLayout, 'cols' | 'rows'>): GridLayout {
+  // Keep the same tactical board when rotating the device. Reserve space for the HUD.
+  const compact = width < 700 || height < 520;
+  const top = height < 520 ? 66 : compact ? 138 : 156;
+  const bottom = height < 520 ? 92 : compact ? 164 : 154;
+  const cols = dimensions?.cols ?? (width < 700 ? 7 : 12);
+  const rows = dimensions?.rows ?? (height < 520 ? 5 : 7);
+  const cellSize = Math.max(8, Math.min(64, Math.floor((width - 24) / cols), Math.floor((height - top - bottom) / rows)));
   const gridWidth = cols * cellSize;
   const gridHeight = rows * cellSize;
   return {
@@ -103,7 +104,9 @@ export function shortestPath(
   if (!found) return [];
   const path: GridCell[] = [];
   let cursor = found;
-  while (cellKey(cursor) !== cellKey(start) && path.length < maxSteps) {
+  // Reconstruct the WHOLE route first. Truncating while walking backwards returns
+  // the final steps near the goal, causing distant enemies to teleport.
+  while (cellKey(cursor) !== cellKey(start)) {
     path.unshift(cursor);
     const p = parent.get(cellKey(cursor));
     if (!p) break;

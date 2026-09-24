@@ -84,6 +84,7 @@ export function assignProfession(state: GameState, mercId: string, profession: P
   ensureCoreSystems(state);
   const merc = state.mercenaries.find(m => m.id === mercId);
   if (!merc) return false;
+  if (merc.profession?.name === profession) return true;
   merc.profession = { name: profession, level: 1, xp: 0 };
   return true;
 }
@@ -92,6 +93,8 @@ export function workProfession(state: GameState, mercId: string): string {
   ensureCoreSystems(state);
   const merc = state.mercenaries.find(m => m.id === mercId);
   if (!merc?.profession) return 'Assign a profession first.';
+  if (merc.lastWorkedDay === state.day) return `${merc.name} has already worked today. Rest before working again.`;
+  merc.lastWorkedDay = state.day;
   const p = merc.profession;
   p.xp += 25;
   awardPathXp(state, 'Trade and Craftsmanship', 5);
@@ -106,6 +109,7 @@ export function workProfession(state: GameState, mercId: string): string {
       state.inventory.push({ id: `medicine-${Date.now()}`, name: 'Field Medicine', rarity: 'Common', value: 18, weight: 0.2 });
       return `${merc.name} brewed field medicine.`;
     case 'Blacksmith':
+      merc.armor = merc.maxArmor;
       for (const item of Object.values(merc.equipment)) if (item?.maxDurability) item.durability = item.maxDurability;
       return `${merc.name} repaired their equipment.`;
     default:
@@ -116,6 +120,7 @@ export function workProfession(state: GameState, mercId: string): string {
 
 export function commitCrime(state: GameState, severity: number): void {
   ensureCoreSystems(state);
+  if (state.unlockedKnowledge.includes('nimble-fingers')) severity = Math.round(severity * 0.8);
   state.suspicion = Math.min(500, state.suspicion + severity);
   state.wantedLevel = Math.min(5, Math.ceil(state.suspicion / 100));
   awardPathXp(state, 'Crime and Chaos', Math.max(2, Math.round(severity / 10)));
@@ -178,6 +183,10 @@ export function tradePrice(region: string, good: string): number {
   return Math.max(1, Math.round((baseTradePrice[good] ?? 20) * (regionMultipliers[region]?.[good] ?? 1)));
 }
 
+export function tradeSellPrice(region: string, good: string, merchantInstinct = false): number {
+  return Math.max(1, Math.floor(tradePrice(region, good) * (merchantInstinct ? 0.9 : 0.8)));
+}
+
 export function buyTradeGood(state: GameState, good: string): boolean {
   ensureCoreSystems(state);
   const price = tradePrice(state.currentRegion, good);
@@ -191,7 +200,7 @@ export function buyTradeGood(state: GameState, good: string): boolean {
 export function sellTradeGood(state: GameState, good: string): number {
   ensureCoreSystems(state);
   if ((state.tradeGoods[good] ?? 0) <= 0) return 0;
-  const price = Math.round(tradePrice(state.currentRegion, good) * 1.12);
+  const price = tradeSellPrice(state.currentRegion, good, state.unlockedKnowledge.includes('merchant-instinct'));
   state.tradeGoods[good] -= 1;
   state.crowns += price;
   awardPathXp(state, 'Trade and Craftsmanship', 5);
@@ -232,7 +241,7 @@ export function exploreTomb(state: GameState, tombId: string): { ok: boolean; me
   state.torches -= 1;
   tomb.roomsExplored += 1;
   awardPathXp(state, 'Mysteries and Wisdom', 6);
-  gainKnowledge(state, 18);
+  gainKnowledge(state, state.unlockedKnowledge.includes('old-languages') ? 30 : 18);
   if (tomb.roomsExplored % 2 === 0 && tomb.codices < 3) tomb.codices += 1;
   if (tomb.roomsExplored >= tomb.totalRooms) {
     tomb.completed = true;
@@ -342,7 +351,7 @@ export function personalityFoodCost(state: GameState): number {
   ensureCoreSystems(state);
   const base = state.mercenaries.reduce((n,m)=>n + 2 + (m.traits.includes('Glutton') ? 1 : 0),0) + state.animals.length * 4;
   const cookingDiscount = state.campFacilities.includes('Cooking Pot') ? 2 : 0;
-  return Math.max(1, base - cookingDiscount);
+  return Math.max(1, base - cookingDiscount - (state.unlockedKnowledge.includes('field-rations') ? 1 : 0));
 }
 
 export function wageTotal(state: GameState): number {

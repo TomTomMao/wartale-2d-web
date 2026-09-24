@@ -53,6 +53,7 @@ export interface Mercenary {
   traits: string[];
   equipment: Equipment;
   profession?: ProfessionProgress;
+  lastWorkedDay?: number;
   weaponOil?: 'Poison';
   specialization?: string;
   learnedSkills: string[];

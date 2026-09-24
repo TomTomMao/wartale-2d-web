@@ -2,10 +2,9 @@ import { BASE_QUEST, CLASS_STATS, ITEMS, startingEnemies } from './data';
 import { ensureCoreSystems, personalityFoodCost, wageTotal } from './systems';
 import type { AnimalCompanion, BattleUnit, GameState, Item, MercClass, Mercenary, Quest, ValorStyle } from './types';
 
-let idCounter = 1;
-const uid = (prefix: string) => `${prefix}-${idCounter++}`;
+const uid = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
 
-export function cloneItem(item: Item): Item { return structuredClone(item); }
+export function cloneItem(item: Item): Item { return { ...structuredClone(item), id: uid(item.id) }; }
 
 export function createMercenary(name: string, cls: MercClass): Mercenary {
   const s = CLASS_STATS[cls];
@@ -27,9 +26,13 @@ export function createInitialState(companyName = 'Iron Wolves', leaderClass: Mer
   const leader = createMercenary('Alden', leaderClass);
   const second = createMercenary('Mira', leaderClass === 'Ranger' ? 'Swordsman' : 'Ranger');
   const third = createMercenary('Bram', leaderClass === 'Warrior' ? 'Spearman' : 'Warrior');
-  leader.equipment.weapon = cloneItem(ITEMS.rustySword);
-  second.equipment.weapon = cloneItem(ITEMS.hunterBow);
+  for (const merc of [leader, second, third]) {
+    const weapon = merc.class === 'Ranger' ? ITEMS.hunterBow : merc.class === 'Spearman' ? ITEMS.ashSpear : merc.class === 'Rogue' ? ITEMS.ironDagger : ITEMS.rustySword;
+    merc.equipment.weapon = cloneItem(weapon);
+  }
   third.equipment.armor = cloneItem(ITEMS.leatherArmor);
+  third.maxArmor += ITEMS.leatherArmor.armor!;
+  third.armor = third.maxArmor;
   return ensureCoreSystems({
     companyName, crowns: 120, food: 12, morale: 50, day: 1, rests: 0,
     worldX: 520, worldY: 900, mercenaries: [leader, second, third],
@@ -39,7 +42,7 @@ export function createInitialState(companyName = 'Iron Wolves', leaderClass: Mer
     origin: 'Wandering Friends', explorationMode: 'Adaptive', permadeath: false, influence: 30,
     fatigue: 0, maxFatigue: 100, valor: 2, maxValor: 4,
     suspicion: 0, wantedLevel: 0, knowledge: 0, knowledgePoints: 0,
-    unlockedKnowledge: [], prisoners: [], ponies: [], campFacilities: [],
+    unlockedKnowledge: [], prisoners: [], ponies: [], campFacilities: ['Campfire', 'Tent', 'Workshop'],
     torches: 6, tombs: [], tradeGoods: {}, materials: {}, ropes: 3, animals: [],
     paths: {
       'Power and Glory': { xp: 0, level: 1, points: 0 },
@@ -83,14 +86,15 @@ export function equipItem(state: GameState, mercId: string, itemId: string): boo
   const index = state.inventory.findIndex(i => i.id === itemId);
   if (!merc || index < 0) return false;
   const item = state.inventory[index];
-  if (!canEquipItem(merc, item)) return false;
+  if (!item.slot || !canEquipItem(merc, item)) return false;
   const old = merc.equipment[item.slot];
   merc.equipment[item.slot] = item;
   state.inventory.splice(index, 1);
   if (old) state.inventory.push(old);
   if (item.slot === 'armor') {
-    merc.maxArmor = CLASS_STATS[merc.class].armor + (item.armor ?? 0);
-    merc.armor = merc.maxArmor;
+    const condition = merc.maxArmor > 0 ? Math.min(1, merc.armor / merc.maxArmor) : 1;
+    merc.maxArmor = Math.max(0, merc.maxArmor + (item.armor ?? 0) - (old?.armor ?? 0));
+    merc.armor = Math.floor(merc.maxArmor * condition);
   }
   return true;
 }
@@ -102,6 +106,24 @@ export function sellItem(state: GameState, itemId: string): number {
   const value = Math.max(1, Math.floor(item.value * 0.55));
   state.crowns += value;
   return value;
+}
+
+export function useItem(state: GameState, itemId: string, mercId?: string): boolean {
+  const index = state.inventory.findIndex(i => i.id === itemId);
+  if (index < 0) return false;
+  const item = state.inventory[index];
+  const merc = state.mercenaries.find(m => m.id === mercId);
+  if (item.food) state.food += item.food;
+  else if (item.name === 'Repair Kit' && merc) {
+    if (merc.armor >= merc.maxArmor && Object.values(merc.equipment).every(i => !i?.maxDurability || i.durability === i.maxDurability)) return false;
+    merc.armor = merc.maxArmor;
+    for (const gear of Object.values(merc.equipment)) if (gear?.maxDurability) gear.durability = gear.maxDurability;
+  } else if (item.name === 'Armor Reinforcement' && merc) {
+    merc.maxArmor += 2;
+    merc.armor += 2;
+  } else return false;
+  state.inventory.splice(index, 1);
+  return true;
 }
 
 export function buyFood(state: GameState, amount = 6, cost = 12): boolean {
@@ -124,6 +146,7 @@ export function recruit(state: GameState, name = 'Kestrel', cls: MercClass = 'Sp
 export function repairAll(state: GameState): number {
   let missing = 0;
   for (const m of state.mercenaries) {
+    missing += Math.max(0, m.maxArmor - m.armor);
     for (const item of Object.values(m.equipment)) {
       if (item?.maxDurability && item.durability !== undefined) missing += item.maxDurability - item.durability;
     }
@@ -132,6 +155,7 @@ export function repairAll(state: GameState): number {
   if (state.crowns < cost) return -1;
   state.crowns -= cost;
   for (const m of state.mercenaries) {
+    m.armor = m.maxArmor;
     for (const item of Object.values(m.equipment)) if (item?.maxDurability) item.durability = item.maxDurability;
   }
   return cost;
@@ -147,6 +171,7 @@ export function rest(state: GameState): { ok: boolean; wagesPaid: number } {
   state.valor = state.maxValor;
   state.rests += 1;
   for (const m of state.mercenaries) { m.health = m.maxHealth; m.armor = m.maxArmor; }
+  for (const a of state.animals) a.health = a.maxHealth;
   let wagesPaid = 0;
   if (state.rests % 3 === 0) {
     const wages = wageTotal(state);
@@ -221,7 +246,17 @@ export function serializeState(state: GameState): string { return JSON.stringify
 export function deserializeState(raw: string): GameState | null {
   try {
     const value = JSON.parse(raw) as GameState;
-    if (!value || !Array.isArray(value.mercenaries) || typeof value.crowns !== 'number') return null;
+    if (!value || !Array.isArray(value.mercenaries) || !Number.isFinite(value.crowns) || typeof value.companyName !== 'string') return null;
+    if (![value.inventory, value.quests, value.enemies, value.discovered].every(Array.isArray)) return null;
+    if (![value.worldX, value.worldY, value.food, value.day, value.morale, value.rests].every(Number.isFinite)) return null;
+    if (!value.mercenaries.every(m => m && CLASS_STATS[m.class] && typeof m.id === 'string' && typeof m.name === 'string' && m.equipment && Array.isArray(m.traits) && [m.health, m.maxHealth, m.armor, m.maxArmor, m.level, m.xp, m.strength, m.dexterity, m.movement, m.crit, m.wage].every(Number.isFinite))) return null;
+    // Older versions reused item template IDs for every copy in the pack.
+    const ids = new Set<string>();
+    for (const item of [...value.inventory, ...value.mercenaries.flatMap(m => Object.values(m.equipment))]) {
+      if (!item || typeof item.id !== 'string') return null;
+      if (ids.has(item.id)) item.id = uid(item.id);
+      ids.add(item.id);
+    }
     return ensureCoreSystems(value);
   } catch { return null; }
 }

@@ -26,6 +26,8 @@ export const CLASS_STATS: Record<MercClass, { hp: number; armor: number; str: nu
 };
 
 export const ITEMS: Record<string, Item> = {
+  ashSpear: { id: 'ash-spear', name: 'Ash Spear', slot: 'weapon', rarity: 'Common', value: 24, power: 3, durability: 30, maxDurability: 30, weight: 2 },
+  ironDagger: { id: 'iron-dagger', name: 'Iron Dagger', slot: 'weapon', rarity: 'Common', value: 20, power: 3, durability: 30, maxDurability: 30, weight: 1 },
   rustySword: { id: 'rusty-sword', name: 'Rusty Sword', slot: 'weapon', rarity: 'Common', value: 18, power: 3, durability: 30, maxDurability: 30, weight: 2 },
   militiaSword: { id: 'militia-sword', name: 'Militia Sword', slot: 'weapon', rarity: 'Uncommon', value: 48, power: 6, durability: 45, maxDurability: 45, weight: 2.5 },
   hunterBow: { id: 'hunter-bow', name: 'Hunter Bow', slot: 'weapon', rarity: 'Uncommon', value: 52, power: 5, durability: 40, maxDurability: 40 },
