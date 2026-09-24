@@ -3,6 +3,7 @@ import { LOCATIONS, WORLD_HEIGHT, WORLD_WIDTH } from './data';
 import { animalToBattleUnit, applyDamage, enemyBattleUnits, gainXp, generateLoot, mercToBattleUnit, recordKill } from './domain';
 import { getState, saveGame } from './store';
 import { awardPathXp, inflictInjury, travelStep } from './systems';
+import { clearLocationGarrison, enterLocation, isNearLocation, locationDefender, nearestLocation } from './locations';
 import type { BattleUnit, MercClass, WorldEnemy } from './types';
 import {
   createPixelLocation,
@@ -25,6 +26,7 @@ export class GameScene extends Phaser.Scene {
   private party?: Phaser.GameObjects.Container;
   private keys?: Record<string, Phaser.Input.Keyboard.Key>;
   private moveTarget?: Phaser.Math.Vector2;
+  private destinationLocation?: string;
   private enemySprites = new Map<string, Phaser.GameObjects.Container>();
   private battleUnits: BattleUnit[] = [];
   private battleSprites = new Map<string, Phaser.GameObjects.Container>();
@@ -73,6 +75,7 @@ export class GameScene extends Phaser.Scene {
     this.selectedUnitId = undefined;
     this.selectedSkillId = undefined;
     this.moveTarget = undefined;
+    this.destinationLocation = undefined;
     this.input.removeAllListeners('pointerdown');
     this.input.removeAllListeners('pointermove');
     this.input.removeAllListeners('wheel');
@@ -118,6 +121,7 @@ export class GameScene extends Phaser.Scene {
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (this.mode !== 'world' || this.uiOpen() || this.encounterEnemy) return;
       const world = p.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
+      this.destinationLocation = undefined;
       this.moveTarget = new Phaser.Math.Vector2(world.x, world.y);
     });
     this.input.on('wheel', (_p: Phaser.Input.Pointer, _objs: unknown[], _dx: number, dy: number) => {
@@ -141,7 +145,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createLocation(loc: typeof LOCATIONS[number]): void {
-    const town = loc.type === 'town';
     const art = createPixelLocation(this, loc.type, loc.id, 0, 0);
     art.setPosition(-24, -28);
     const label = this.add.text(0, 32, loc.name, {
@@ -149,16 +152,33 @@ export class GameScene extends Phaser.Scene {
       backgroundColor: '#1d1914dd', padding: { x: 6, y: 3 }
     }).setOrigin(0.5);
     const marker = this.add.container(loc.x, loc.y, [art, label]).setDepth(10);
-    marker.setSize(92, 82).setInteractive({ useHandCursor: true }).on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, ev: Phaser.Types.Input.EventData) => {
+    marker.setSize(150, 116).setInteractive({ useHandCursor: true }).on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, ev: Phaser.Types.Input.EventData) => {
       ev.stopPropagation();
       if (this.uiOpen() || this.encounterEnemy) return;
-      this.moveTarget = undefined;
-      const state = getState();
-      const dist = Phaser.Math.Distance.Between(state.worldX, state.worldY, loc.x, loc.y);
-      if (town && dist < 150) this.emit({ type: 'town', townId: loc.id, townName: loc.name });
-      else if (loc.id.includes('tomb') && dist < 170) this.emit({ type: 'tomb', tombId: loc.id, tombName: loc.name });
-      else this.emit({ type: 'toast', message: dist < 180 ? `${loc.name} explored.` : `Move closer to ${loc.name}.` });
+      this.travelToLocation(loc.id);
     });
+  }
+
+  travelToLocation(id: string): void {
+    if (this.mode !== 'world' || this.encounterEnemy || this.uiOpen()) return;
+    const loc = LOCATIONS.find(l => l.id === id);
+    if (!loc) return;
+    if (isNearLocation(getState(), id)) { this.enterNearbyLocation(id); return; }
+    this.destinationLocation = id;
+    this.moveTarget = new Phaser.Math.Vector2(loc.x, loc.y);
+    this.emit({ type: 'toast', message: `Travelling to ${loc.name}. Your company will enter on arrival.` });
+  }
+
+  enterNearbyLocation(id?: string): void {
+    if (this.mode !== 'world' || this.encounterEnemy || this.uiOpen()) return;
+    const loc = id ? LOCATIONS.find(l => l.id === id) : nearestLocation(getState());
+    if (!loc || !enterLocation(getState(), loc.id)) return;
+    this.moveTarget = undefined;
+    this.destinationLocation = undefined;
+    saveGame();
+    if (loc.type === 'town') this.emit({ type: 'town', townId: loc.id, townName: loc.name });
+    else if (loc.id.includes('tomb')) this.emit({ type: 'tomb', tombId: loc.id, tombName: loc.name });
+    else this.emit({ type: 'location', locationId: loc.id });
   }
 
   private createEnemies(): void {
@@ -179,6 +199,7 @@ export class GameScene extends Phaser.Scene {
     if (this.mode !== 'world' || !this.party || !this.keys) return;
     if (this.uiOpen() || this.encounterEnemy) {
       this.moveTarget = undefined;
+      this.destinationLocation = undefined;
       for (const child of this.party.list) if (child instanceof Phaser.GameObjects.Sprite) setWalk(child, false);
       return;
     }
@@ -194,6 +215,7 @@ export class GameScene extends Phaser.Scene {
     if (this.keys.D.isDown) dx += 1;
     let partyMoving = false;
     if (dx || dy) {
+      this.destinationLocation = undefined;
       partyMoving = true;
       const len = Math.hypot(dx, dy);
       const step = speed * delta / 1000;
@@ -221,9 +243,14 @@ export class GameScene extends Phaser.Scene {
     for (const child of this.party.list) {
       if (child instanceof Phaser.GameObjects.Sprite) setWalk(child, partyMoving);
     }
+    if (this.destinationLocation && isNearLocation(state, this.destinationLocation)) {
+      this.enterNearbyLocation(this.destinationLocation);
+      return;
+    }
     this.updateEnemies(delta);
     this.checkDiscoveries();
     this.checkEncounter();
+    if (this.encounterEnemy) return;
     if (Phaser.Input.Keyboard.JustDown(this.keys.I)) this.emit({ type: 'inventory' });
     if (Phaser.Input.Keyboard.JustDown(this.keys.Q)) this.emit({ type: 'quests' });
     if (Phaser.Input.Keyboard.JustDown(this.keys.R)) this.emit({ type: 'camp' });
@@ -316,6 +343,15 @@ export class GameScene extends Phaser.Scene {
     if (!e || !e.alive || this.mode !== 'world') return;
     this.encounterEnemy = e;
     this.startBattle(e);
+  }
+
+  startLocationBattle(id: string): void {
+    if (this.mode !== 'world' || this.encounterEnemy) return;
+    const enemy = locationDefender(getState(), id);
+    if (!enemy) return;
+    this.destinationLocation = undefined;
+    this.encounterEnemy = enemy;
+    this.startBattle(enemy);
   }
 
   private startBattle(enemy: WorldEnemy): void {
@@ -1003,6 +1039,7 @@ export class GameScene extends Phaser.Scene {
         e.alive = false;
         const loot = generateLoot(e.kind);
         const state = getState();
+        clearLocationGarrison(state, e);
         state.crowns += loot.crowns;
         state.inventory.push(...loot.items);
         if (e.kind === 'wolf') {
@@ -1060,10 +1097,12 @@ export class GameScene extends Phaser.Scene {
 
   continueFromBattle(): void {
     if (this.battlePhase !== 'finished') return;
+    const locationId = this.encounterEnemy?.id.startsWith('garrison:') ? this.encounterEnemy.id.slice('garrison:'.length) : undefined;
     this.encounterEnemy = undefined;
     this.encounterGraceUntil = this.time.now + 5000;
     this.temporaryValor = 0;
     this.renderWorld();
+    if (locationId) this.enterNearbyLocation(locationId);
   }
 
   private refreshBattleHud(): void {

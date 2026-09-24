@@ -37,7 +37,7 @@ export function createInitialState(companyName = 'Iron Wolves', leaderClass: Mer
     companyName, crowns: 120, food: 12, morale: 50, day: 1, rests: 0,
     worldX: 520, worldY: 900, mercenaries: [leader, second, third],
     inventory: [cloneItem(ITEMS.bread), cloneItem(ITEMS.meat)],
-    quests: [structuredClone(BASE_QUEST)], discovered: ['stonebridge'],
+    quests: [structuredClone(BASE_QUEST)], discovered: ['stonebridge'], locations: {},
     enemies: startingEnemies(), currentRegion: 'Greenmarch', difficulty,
     origin: 'Wandering Friends', explorationMode: 'Adaptive', permadeath: false, influence: 30,
     fatigue: 0, maxFatigue: 100, valor: 2, maxValor: 4,

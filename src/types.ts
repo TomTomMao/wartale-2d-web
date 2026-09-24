@@ -20,6 +20,8 @@ export interface Item {
   weight?: number;
   stolen?: boolean;
   tradeGood?: string;
+  upgradeLevel?: number;
+  baseName?: string;
 }
 
 export interface Equipment {
@@ -53,6 +55,7 @@ export interface Mercenary {
   traits: string[];
   equipment: Equipment;
   profession?: ProfessionProgress;
+  professionHistory?: Partial<Record<Profession, ProfessionProgress>>;
   lastWorkedDay?: number;
   weaponOil?: 'Poison';
   specialization?: string;
@@ -122,6 +125,15 @@ export interface TombProgress {
   completed: boolean;
 }
 
+export interface LocationProgress {
+  entered: boolean;
+  searched: boolean;
+  cleared: boolean;
+  cacheOpened: boolean;
+  lastGatherDay?: number;
+  lastStealDay?: number;
+}
+
 export interface GameState {
   companyName: string;
   crowns: number;
@@ -135,6 +147,7 @@ export interface GameState {
   inventory: Item[];
   quests: Quest[];
   discovered: string[];
+  locations: Record<string, LocationProgress>;
   enemies: WorldEnemy[];
   currentRegion: string;
   difficulty: 'Easy' | 'Normal' | 'Hard';
