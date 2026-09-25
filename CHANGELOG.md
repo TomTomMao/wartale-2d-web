@@ -1,3 +1,15 @@
+# Game interface redesign
+
+- Replaced the split landing page with a full-screen original pixel landscape, company silhouettes and a game title menu.
+- Rebuilt Company as a selectable portrait roster, character sheet, equipment slots, filtered pack grid and item inspector with explicit companion equip targets.
+- Rebuilt Camp around a forest scene with interactive tent, campfire and anvil hotspots. Supplies, facilities and companions share a compact tabbed ledger.
+- Replaced the location card list with a parchment atlas, selectable markers and a destination preview. Browsing and travelling are separate actions; all 11 locations remain accessible.
+- Rebuilt Forge as a recipe book beside an illustrated anvil, with item previews, requirements, costs and separate upgrade candidates. Newly forged equipment is selected automatically.
+- Added original native pixel scenes for towns, mines, mills and ruins, plus distinct item/resource sprites. Shared panels, the HUD and battle controls use metal, leather and parchment styling.
+- Preserved selection focus and scroll position when refreshing interactive panels. Added a working return path from the title's field manual.
+- Added three browser scenarios for companion selection/equipping, forge selection, all atlas markers, camp hotspots/facility building, keyboard focus and mobile scroll retention. Updated the mobile progression test to use the new map and pack interactions.
+- Validation: 106 rule tests, 23 browser scenarios, production build and desktop/mobile screenshot review.
+
 # Professions, exploration and equipment update
 
 - Replaced placeholder POI messages with enterable exploration screens for the Old Mill, Iron Mine, Bandit Camp, Ruined Keep and Old Battlefield. Added a field journal, automatic travel/entry, a nearby Enter button and an event-based E shortcut.

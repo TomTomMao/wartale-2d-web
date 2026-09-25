@@ -45,6 +45,7 @@ test('mobile: assign trades, mine, forge, upgrade, equip and resume the same com
   await page.screenshot({ path: 'test-results/mobile-professions.png' });
   await close(page);
   await page.getByRole('button', { name: 'Explore', exact: true }).click();
+  await page.getByRole('button', { name: 'Select Iron Mine', exact: true }).click();
   await page.getByRole('button', { name: 'Travel to Iron Mine', exact: true }).click();
   await expect(page.getByTestId('location-panel')).toHaveAttribute('data-location', 'iron-mine');
   const iron = (await state(page)).materials.iron;
@@ -61,6 +62,7 @@ test('mobile: assign trades, mine, forge, upgrade, equip and resume the same com
   expect(await page.getByTestId('forge-panel').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/mobile-forge.png' });
   await page.getByRole('button', { name: 'Company equipment', exact: true }).click();
+  await page.getByRole('button', { name: 'Inspect Forged Sword +1', exact: true }).click();
   await page.locator(`[data-action="equip"][data-item-id="${sword.id}"][data-merc="${s.mercenaries[0].id}"]`).click();
   const equipped = (await state(page)).mercenaries[0].equipment.weapon!;
   expect(equipped.power).toBe(8);

@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import './style.css';
+import './gameUi.css';
 import { actorPortrait } from './animatedSprites';
+import { itemIcon, sceneArt, sceneBanner } from './gameArt';
 import { icon, escapeHtml } from './ui';
 import { LOCATIONS, WORLD_WIDTH, WORLD_HEIGHT } from './data';
 import { GameScene } from './game';
@@ -27,6 +29,13 @@ let scene: GameScene | null = null;
 let currentTownName = 'Stonebridge';
 let currentTownId = 'stonebridge';
 let currentForgeTab: 'craft' | 'upgrade' = 'craft';
+let selectedRecipeId = 'forged-sword';
+let selectedForgeItemId = '';
+let selectedMercId = '';
+let selectedItemId = '';
+let inventoryFilter = 'all';
+let selectedLocationId = 'stonebridge';
+let campTab = 'supplies';
 let workshopNotice = '';
 let siteNotice = '';
 let lastBattleHud: BattleHudDetail | null = null;
@@ -97,7 +106,7 @@ function renderWorldHud(): void {
   const quest = s.quests.find(q => q.state === 'active') ?? s.quests.find(q => q.state === 'available');
   const objective = quest?.state === 'available' ? 'Your first contract' : quest ? (quest.progress >= quest.required ? 'Claim your reward' : 'Clear the eastern road') : 'The frontier awaits';
   const objectiveText = quest?.state === 'available' ? 'Visit the contract board to earn your company’s first bounty.' : quest ? (quest.progress >= quest.required ? 'Your contract is complete. Collect the crowns and experience.' : 'Track down a bandit patrol east of Stonebridge.') : 'Explore a tomb, build your camp, or trade between settlements.';
-  const resource = (symbol: string, value: string | number, label: string, cls = '') => `<span class="resource-chip ${cls}" title="${label}">${icon(symbol)}<span><em data-resource="${label}">${value}</em><small>${label}</small></span></span>`;
+  const resource = (symbol: string, value: string | number, label: string, cls = '') => `<span class="resource-chip ${cls}" title="${label}">${itemIcon(symbol)}<span><em data-resource="${label}">${value}</em><small>${label}</small></span></span>`;
   hud.innerHTML = `
     <div class="topbar world-topbar" data-testid="world-hud">
       <div class="hud-brand"><div class="company-mark">${icon('sword')}</div><div class="hud-title"><strong>${escapeHtml(s.companyName)}</strong><span>DAY ${s.day} <i>·</i> <b class="live-region">${s.currentRegion}</b></span></div></div>
@@ -120,8 +129,8 @@ function renderWorldHud(): void {
         <circle class="map-company" cx="${s.worldX/WORLD_WIDTH*160}" cy="${s.worldY/WORLD_HEIGHT*110}" r="4" fill="#f4d18b" stroke="#fff6dc"/>
       </svg><small>● Company <span>■ Settlement</span></small>
     </div>
-    <div class="quickbar mobile-nav" data-testid="mobile-nav">
-      ${[['shield','Company','inventory'],['eye','Explore','explore'],['scroll','Contracts','quests'],['star','Knowledge','knowledge'],['camp','Camp','camp'],['save','Save','save']].map(([symbol,label,action])=>button(`${icon(symbol)}<span class="nav-label">${label}</span>`, action, 'nav-btn')).join('')}
+    <div class="world-companions" aria-label="Companions">${s.mercenaries.slice(0,4).map(m => `<button data-action="select-merc" data-merc="${m.id}" aria-label="View ${escapeHtml(m.name)}">${portrait(m.class)}<span>${escapeHtml(m.name)}</span><i class="health-track"><i style="width:${Math.max(0,m.health/m.maxHealth)*100}%"></i></i></button>`).join('')}</div><div class="quickbar mobile-nav" data-testid="mobile-nav">
+      ${[['shield','Company','inventory'],['eye','Explore','explore'],['scroll','Contracts','quests'],['star','Knowledge','knowledge'],['camp','Camp','camp'],['save','Save','save']].map(([symbol,label,action])=>button(`${itemIcon(label)}<span class="nav-label">${label}</span>`, action, 'nav-btn')).join('')}
     </div><div id="nearby-location"></div>`;
   updateNearbyLocation();
 }
@@ -137,7 +146,7 @@ function updateNearbyLocation(): void {
 
 function materialStrip(): string {
   const s = getState();
-  return `<div class="material-strip" aria-label="Available resources"><span>${icon('coin')} <b>${s.crowns}</b> crowns</span>${Object.entries(s.materials).map(([key, value]) => `<span><b>${value}</b> ${escapeHtml(key)}</span>`).join('')}</div>`;
+  return `<div class="material-strip" aria-label="Available resources"><span>${itemIcon('coin')} <b>${s.crowns}</b> crowns</span>${Object.entries(s.materials).map(([key, value]) => `<span>${itemIcon(key)} <b>${value}</b> ${escapeHtml(key)}</span>`).join('')}</div>`;
 }
 
 function workNotice(): string { return workshopNotice ? `<p class="work-receipt" role="status">${icon('check')} ${escapeHtml(workshopNotice)}</p>` : ''; }
@@ -165,37 +174,45 @@ function showForge(tab = currentForgeTab): void {
   currentForgeTab = tab;
   const s = ensureCoreSystems(getState());
   const smith = bestProfessional(s, 'Blacksmith');
-  const items = tab === 'craft' ? FORGE_RECIPES.map(recipe => {
+  const recipe = FORGE_RECIPES.find(r => r.id === selectedRecipeId) ?? FORGE_RECIPES[0];
+  const gear = companyGear(s);
+  const chosen = gear.find(g => g.item.id === selectedForgeItemId) ?? gear[0];
+  if (chosen) selectedForgeItemId = chosen.item.id;
+  const list = tab === 'craft' ? FORGE_RECIPES.map(r => `<button class="catalog-entry ${r.id === recipe.id ? 'active' : ''}" data-action="forge-choice" data-recipe="${r.id}" aria-pressed="${r.id === recipe.id}">${itemIcon(r.item.name)}<span><strong>${r.item.name}</strong><small>${r.item.power ? r.item.power + ' power' : r.item.armor + ' armor'} · Smith Lv ${r.level}</small></span>${icon('arrow')}</button>`).join('')
+    : gear.map(({item,owner}) => `<button class="catalog-entry ${item.id === chosen?.item.id ? 'active' : ''}" data-action="upgrade-choice" data-item-id="${item.id}" aria-pressed="${item.id === chosen?.item.id}">${itemIcon(item.name)}<span><strong>${escapeHtml(item.name)}</strong><small>${owner ? escapeHtml(owner.name) : 'In your pack'} · +${item.upgradeLevel ?? 0}</small></span></button>`).join('');
+  let detail = '';
+  if (tab === 'craft') {
     const status = forgeRecipeStatus(s, recipe.id);
-    return `<article class="recipe-card" data-recipe="${recipe.id}"><div class="recipe-heading"><div class="item-emblem">${icon(recipe.item.slot === 'weapon' ? 'sword' : 'shield')}</div><div><small>${recipe.item.rarity} · ${recipe.users}</small><h3>${recipe.item.name}</h3></div></div>
-      <div class="stat-preview">${recipe.item.power ? `${recipe.item.power} power` : `${recipe.item.armor} armor`} <span>· ${recipe.item.maxDurability} durability</span></div>
-      <p class="recipe-cost">${costLabel(recipe.cost)}</p><small>Blacksmith Lv ${recipe.level} · +20 profession XP</small>
-      ${button(`Forge ${recipe.item.name}`, 'forge-equipment', 'primary', `data-recipe="${recipe.id}" ${status.reason ? 'disabled' : ''}`)}<small class="requirement">${status.reason ?? 'Ready to forge · added to your pack'}</small></article>`;
-  }).join('') : companyGear(s).map(({ item, owner }) => {
+    detail = `<article class="recipe-card forge-detail" data-recipe="${recipe.id}"><div class="item-showcase rarity-${recipe.item.rarity.toLowerCase()}">${itemIcon(recipe.item.name)}</div><span class="eyebrow">${recipe.item.rarity} · ${recipe.users}</span><h3>${recipe.item.name}</h3><div class="stat-preview">${recipe.item.power ? `${recipe.item.power} power` : `${recipe.item.armor} armor`} <span>· ${recipe.item.maxDurability} durability</span></div><p class="recipe-cost">${costLabel(recipe.cost)}</p>${button(`Forge ${recipe.item.name}`, 'forge-equipment', 'primary', `data-recipe="${recipe.id}" ${status.reason ? 'disabled' : ''}`)}<small class="requirement">${status.reason ?? 'Ready to forge · +20 Blacksmith XP'}</small></article>`;
+  } else if (chosen) {
+    const { item, owner } = chosen;
     const status = upgradeStatus(s, item.id);
     const maxed = status.nextLevel > 3;
     const stat = item.slot === 'weapon' ? item.power ?? 0 : item.armor ?? 0;
-    return `<article class="recipe-card" data-item-id="${item.id}"><div class="recipe-heading"><div class="item-emblem">${icon(item.slot === 'weapon' ? 'sword' : 'shield')}</div><div><small>${owner ? `Equipped · ${escapeHtml(owner.name)}` : 'In your pack'}</small><h3>${escapeHtml(item.name)}</h3></div></div>
-      <div class="stat-preview">${stat}${maxed ? '' : ` → ${stat + (item.slot === 'weapon' ? 2 : 3)}`} ${item.slot === 'weapon' ? 'power' : 'armor'} <span>· ${maxed ? '+3 maximum' : `Upgrade +${status.nextLevel}`}</span></div>
-      <p class="recipe-cost">${maxed ? 'Fully upgraded' : costLabel(status.cost)}</p><small>${maxed ? 'Masterwork equipment' : `Blacksmith Lv ${status.nextLevel} · +25 profession XP`}</small>
-      ${button(maxed ? 'Maximum upgrade' : `Upgrade to +${status.nextLevel}`, 'upgrade-equipment', 'primary', `data-item-id="${item.id}" ${status.reason ? 'disabled' : ''}`)}<small class="requirement">${status.reason ?? 'Improves this item in place · preserves damage'}</small></article>`;
-  }).join('');
-  modal.innerHTML = `<div class="panel wide workshop-panel" data-testid="forge-panel"><header><div><small>${forgeStation(s) ?? 'EQUIPMENT WORKSHOP'}</small><h2>Forge & Upgrade</h2></div><button class="x" data-action="close" aria-label="Close">×</button></header>
-    <div class="workshop-summary"><p>${smith ? `<strong>${escapeHtml(smith.name)}</strong> · Blacksmith Lv ${smith.profession!.level} · ${smith.profession!.xp} XP` : 'A company Blacksmith is needed to forge and upgrade equipment.'}<br/><small>Weapons gain +2 power per upgrade; armor gains +3. Three upgrades per item.</small></p>${button('Assign professions', 'professions')}</div>
-    ${materialStrip()}${workNotice()}<div class="workshop-tabs" role="group" aria-label="Equipment workshop"><button class="btn ${tab === 'craft' ? 'selected-skill' : ''}" data-action="forge-tab" data-tab="craft" aria-pressed="${tab === 'craft'}">Forge equipment</button><button class="btn ${tab === 'upgrade' ? 'selected-skill' : ''}" data-action="forge-tab" data-tab="upgrade" aria-pressed="${tab === 'upgrade'}">Upgrade equipment</button></div>
-    <div class="recipe-grid">${items || '<p>No weapons or armor available.</p>'}</div><footer class="workshop-footer">${button('Company equipment', 'inventory')}${button('Return to camp', 'camp')}</footer></div>`;
+    detail = `<article class="recipe-card forge-detail" data-item-id="${item.id}"><div class="item-showcase rarity-${item.rarity.toLowerCase()}">${itemIcon(item.name)}<span>+${item.upgradeLevel ?? 0}</span></div><span class="eyebrow">${owner ? `Equipped · ${escapeHtml(owner.name)}` : 'In your pack'}</span><h3>${escapeHtml(item.name)}</h3><div class="stat-preview">${stat}${maxed ? '' : ` → ${stat + (item.slot === 'weapon' ? 2 : 3)}`} ${item.slot === 'weapon' ? 'power' : 'armor'}</div><p class="recipe-cost">${maxed ? 'Masterwork · fully upgraded' : costLabel(status.cost)}</p>${button(maxed ? 'Maximum upgrade' : `Upgrade to +${status.nextLevel}`, 'upgrade-equipment', 'primary', `data-item-id="${item.id}" ${status.reason ? 'disabled' : ''}`)}<small class="requirement">${status.reason ?? `Blacksmith Lv ${status.nextLevel} · +25 XP · preserves condition`}</small></article>`;
+  }
+  modal.innerHTML = `<div class="panel wide workshop-panel forge-screen" data-testid="forge-panel"><header><div><small>${forgeStation(s) ?? 'EQUIPMENT WORKSHOP'}</small><h2>The Iron Forge</h2></div><button class="x" data-action="close" aria-label="Close">×</button></header>
+    ${materialStrip()}${workNotice()}<div class="workshop-tabs" role="group" aria-label="Equipment workshop">${button('Forge equipment', 'forge-tab', tab === 'craft' ? 'selected-skill' : '', `data-tab="craft" aria-pressed="${tab === 'craft'}"`)}${button('Upgrade equipment', 'forge-tab', tab === 'upgrade' ? 'selected-skill' : '', `data-tab="upgrade" aria-pressed="${tab === 'upgrade'}"`)}</div>
+    <div class="forge-layout"><nav class="forge-catalog" aria-label="${tab === 'craft' ? 'Equipment recipes' : 'Upgrade candidates'}"><span class="eyebrow">${tab === 'craft' ? 'CRAFTING DESIGNS' : 'COMPANY EQUIPMENT'}</span>${list || '<p>No equipment available.</p>'}</nav><section class="forge-workbench">${sceneBanner('forge', 'THE ANVIL AWAITS')}${detail || '<p>Collect a weapon or armor to start upgrading.</p>'}</section></div>
+    <div class="smith-status">${smith ? portrait(smith.class) + `<span><strong>${escapeHtml(smith.name)}</strong><small>Blacksmith Lv ${smith.profession!.level} · ${smith.profession!.xp} XP</small></span>` : `<span>Assign a Blacksmith to work the forge.</span>`}${button('Assign professions', 'professions')}</div><footer class="workshop-footer">${button('Company equipment', 'inventory')}${button('Return to camp', 'camp')}</footer></div>`;
 }
 
 function showExplore(): void {
   const s = getState();
-  modal.innerHTML = `<div class="panel wide exploration-panel" data-testid="explore-panel"><header><div><small>FRONTIER FIELD JOURNAL</small><h2>Explore the frontier</h2></div><button class="x" data-action="close" aria-label="Close">×</button></header><p>Choose a destination to walk there and enter automatically. Discovered and cleared locations can always be revisited. Patrols may interrupt your journey.</p><div class="location-grid">${LOCATIONS.map(loc => {
-    const progress = s.locations[loc.id];
-    const near = isNearLocation(s, loc.id);
-    const tomb = s.tombs.find(t => t.id === loc.id);
-    const detail = loc.type === 'town' ? 'Recruitment · Forge · Market' : tomb ? `Ancient tomb · ${tomb.roomsExplored}/${tomb.totalRooms} rooms` : loc.id === 'iron-mine' ? 'Iron · Miner bonus · Locked chest' : loc.id === 'old-mill' ? 'Grain · Wood · Cook & Tinkerer bonuses' : loc.id === 'old-battlefield' ? 'Salvage · Scholar bonus · Locked chest' : 'Garrison battle · Supplies · Locked chest';
-    const status = tomb?.completed || progress?.cleared ? 'Cleared · open to revisit' : progress?.searched ? 'Searched · open to revisit' : progress?.entered ? 'Visited' : s.discovered.includes(loc.id) ? 'Discovered' : 'Unvisited';
-    return `<article class="location-card"><span class="eyebrow">${loc.region}</span><h3>${loc.name}</h3><p>${detail}</p><small>${status}</small>${button(near ? 'Enter' : `Travel · ${Math.round(Math.hypot(s.worldX - loc.x, s.worldY - loc.y))} m`, 'travel-location', near ? 'primary' : '', `data-location="${loc.id}" aria-label="${near ? 'Enter' : 'Travel to'} ${loc.name}"`)}</article>`;
-  }).join('')}</div></div>`;
+  const loc = LOCATIONS.find(l => l.id === selectedLocationId) ?? LOCATIONS[0];
+  const progress = s.locations[loc.id];
+  const near = isNearLocation(s, loc.id);
+  const tomb = s.tombs.find(t => t.id === loc.id);
+  const detail = loc.type === 'town' ? 'Recruitment · Forge · Market' : tomb ? `Ancient tomb · ${tomb.roomsExplored}/${tomb.totalRooms} rooms` : loc.id === 'iron-mine' ? 'Iron · Miner bonus · Locked chest' : loc.id === 'old-mill' ? 'Grain · Wood · Cook & Tinkerer bonuses' : loc.id === 'old-battlefield' ? 'Salvage · Scholar bonus · Locked chest' : 'Garrison battle · Supplies · Locked chest';
+  const status = tomb?.completed || progress?.cleared ? 'Cleared · open to revisit' : progress?.searched ? 'Searched · open to revisit' : progress?.entered ? 'Visited' : s.discovered.includes(loc.id) ? 'Discovered' : 'Unvisited';
+  modal.innerHTML = `<div class="panel wide exploration-panel atlas-screen" data-testid="explore-panel"><header><div><small>CHART YOUR NEXT JOURNEY</small><h2>Map of the Frontier</h2></div><button class="x" data-action="close" aria-label="Close">×</button></header><div class="atlas-layout"><div class="atlas-map" role="group" aria-label="Choose a destination">
+    <svg class="atlas-terrain" viewBox="0 0 640 440" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0H640V440H0Z" fill="#b7a478"/><path d="M0 0H289L273 80 301 127 282 225 310 331 283 440H0Z" fill="#9a9d6b"/><path d="M285 0 273 80 301 127 282 225 310 331 283 440" fill="none" stroke="#748f8b" stroke-width="11"/><path d="M380 0 351 108 405 183 467 216 501 313 640 365V0Z" fill="#a49777"/><path d="M0 330 150 320 277 385 437 289 640 314V440H0Z" fill="#aeb1a0"/><path d="M124 164 208 124 302 152 430 236 540 344M208 124 250 206 284 274M302 152 410 130 488 156M430 236 470 352 574 274" fill="none" stroke="#776243" stroke-width="3" stroke-dasharray="5 4"/>
+    ${Array.from({length: 35}, (_,i) => { const x=28+(i*73)%590,y=30+(i*47)%365;return `<path d="M${x-6} ${y+9}l6-16 6 16zm-3 7l9-18 9 18z" fill="#5f704e" opacity=".45"/>`; }).join('')}
+    ${Array.from({length: 12}, (_,i) => {const x=370+(i*49)%210,y=28+(i*31)%160;return `<path d="M${x-13} ${y+16}l13-27 14 27z" fill="#746f5b" opacity=".55"/><path d="M${x-5} ${y}l5-11 6 11z" fill="#d6c7a4"/>`;}).join('')}
+    <text x="63" y="270">GREENMARCH</text><text x="372" y="88">ASHEN HILLS</text><text x="392" y="406">FROSTMERE</text></svg><span class="map-compass" aria-hidden="true">N<br/>✧</span>
+    ${LOCATIONS.map(l => `<button class="atlas-pin ${l.id === loc.id ? 'active' : ''} ${l.type}" style="left:${l.x/WORLD_WIDTH*100}%;top:${l.y/WORLD_HEIGHT*100}%" data-action="map-select" data-location="${l.id}" aria-label="Select ${l.name}" aria-pressed="${l.id === loc.id}"><span>${l.type === 'town' ? '⌂' : l.type === 'hostile' ? '⚑' : '◆'}</span><small>${l.name}</small></button>`).join('')}
+    <span class="atlas-company" style="left:${s.worldX/WORLD_WIDTH*100}%;top:${s.worldY/WORLD_HEIGHT*100}%" title="Your company" aria-label="Your company">●</span><div class="atlas-key">⌂ Settlement <span>◆ Exploration</span> ⚑ Garrison</div></div>
+    <aside class="destination-detail">${sceneBanner(loc.type === 'town' ? 'town' : loc.id)}<div><span class="eyebrow">${loc.region}</span><h3>${loc.name}</h3><p>${detail}</p><span class="destination-status">${icon('eye')} ${status}</span>${button(near ? `Enter ${loc.name}` : `Travel to ${loc.name}`, 'travel-location', 'primary', `data-location="${loc.id}"`)}<small>${near ? 'Your company is nearby.' : `${Math.round(Math.hypot(s.worldX-loc.x,s.worldY-loc.y))} m · Patrols may interrupt travel.`}</small></div></aside></div><p class="atlas-hint">Choose a map marker, then travel. Every location can be visited again.</p></div>`;
 }
 
 function showLocation(id: string): void {
@@ -211,7 +228,7 @@ function showLocation(id: string): void {
     ...(site.gather ? [{ action: 'gather' as const, label: site.gather, hint: id === 'iron-mine' ? 'Fresh seam each day. A Miner increases the yield.' : 'Available each day. Cooks find extra grain; Tinkerers recover extra wood.' }] : []),
     { action: 'cache', label: progress.cacheOpened ? 'Cache emptied' : bestProfessional(s, 'Thief') ? 'Pick the lock' : 'Force the lock', hint: 'One treasure cache. A Thief opens it without spending materials and earns XP.' }
   ];
-  modal.innerHTML = `<div class="panel wide exploration-panel" data-testid="location-panel" data-location="${id}"><header><div><small>${site.theme}</small><h2>${loc.name}</h2></div><button class="x" data-action="close" aria-label="Close">×</button></header><div class="site-banner ${id}"><div class="site-emblem">${icon(id === 'iron-mine' ? 'shield' : site.enemy ? 'sword' : 'eye')}</div><div><span class="eyebrow">${loc.region} · ${defended ? 'OCCUPIED' : progress.cleared ? 'CLEARED' : 'EXPLORATION'}</span><p>${site.description}</p></div></div>
+  modal.innerHTML = `<div class="panel wide exploration-panel" data-testid="location-panel" data-location="${id}"><header><div><small>${site.theme}</small><h2>${loc.name}</h2></div><button class="x" data-action="close" aria-label="Close">×</button></header>${sceneBanner(id, `${loc.region} · ${defended ? 'OCCUPIED' : progress.cleared ? 'CLEARED' : 'EXPLORATION'}`)}<p class="site-description">${site.description}</p>
     ${materialStrip()}${siteNotice ? `<p class="work-receipt" role="status">${escapeHtml(siteNotice)}</p>` : ''}
     ${defended ? `<div class="garrison-notice"><div><h3>Defenders hold this site</h3><p>Threat ${site.enemy!.strength} · ${site.enemy!.kind === 'raider' ? 'Raider garrison' : 'Bandit garrison'}. Supplies unlock after victory.</p></div>${button('Fight the defenders', 'fight-location', 'danger', `data-location="${id}"`)}</div>` : ''}
     <div class="recipe-grid">${actions.map(({ action, label, hint }) => {
@@ -241,12 +258,12 @@ function renderBattleHud(detail: BattleHudDetail): void {
       <p class="battle-hint" role="status" data-testid="battle-hint">${escapeHtml(detail.hint || 'Select a mercenary to begin.')}</p>
       <div class="command-controls">
         <div class="battle-actions expanded-actions">
-          ${button(`${icon('sword')}<span>Basic attack</span><small>No Valor cost</small>`, 'basic-attack', `action-btn ${!activeSkill?'selected-skill':''}`, disabled)}
-          ${button(`${icon('star')}<span>Rally</span><small>1 Valor · buff</small>`, 'valor-skill', 'action-btn', !ready || detail.totalValor<1?'disabled':'')}
-          ${detail.skills.map(skill=>button(`${icon(skill.target==='enemy'?'target':'shield')}<span>${skill.name}</span><small>${skill.cost?skill.cost+' Valor':'Free'} · ${skill.target==='self'?'Self':'Target'}</small>`, 'battle-skill', `action-btn ${activeSkill?.id===skill.id?'selected-skill':''}`, `data-skill="${skill.id}" title="${skill.description}" ${!ready||detail.totalValor<skill.cost?'disabled':''}`)).join('')}
+          ${button(`${itemIcon('sword')}<span>Basic attack</span><small>No Valor cost</small>`, 'basic-attack', `action-btn ${!activeSkill?'selected-skill':''}`, disabled)}
+          ${button(`${itemIcon('scroll')}<span>Rally</span><small>1 Valor · buff</small>`, 'valor-skill', 'action-btn', !ready || detail.totalValor<1?'disabled':'')}
+          ${detail.skills.map(skill=>button(`${itemIcon(skill.target==='enemy'?'target':'shield')}<span>${skill.name}</span><small>${skill.cost?skill.cost+' Valor':'Free'} · ${skill.target==='self'?'Self':'Target'}</small>`, 'battle-skill', `action-btn ${activeSkill?.id===skill.id?'selected-skill':''}`, `data-skill="${skill.id}" title="${skill.description}" ${!ready||detail.totalValor<skill.cost?'disabled':''}`)).join('')}
         </div>
         <div class="turn-actions">
-          ${button(`${icon('shield')}<span>Guard</span>`, 'guard', 'action-btn', disabled)}
+          ${button(`${itemIcon('shield')}<span>Guard</span>`, 'guard', 'action-btn', disabled)}
           ${button(`${icon('check')}<span>End Unit</span>`, 'end-unit', 'action-btn primary', disabled)}
         </div>
       </div>
@@ -263,17 +280,24 @@ function showToast(message: string): void {
 
 function closeModal(): void { modal.innerHTML = ''; }
 
+// Selecting a slot should keep both keyboard focus and the player's place in a
+// scrolled pack, recipe book or roster, even though the panel is re-rendered.
+function refreshPanel(render: () => void, target: HTMLElement): void {
+  const top = modal.firstElementChild?.scrollTop ?? 0;
+  const positions = ['.forge-catalog', '.companion-roster', '.inventory-slots'].map(selector => {
+    const el = modal.querySelector(selector);
+    return { selector, left: el?.scrollLeft ?? 0, top: el?.scrollTop ?? 0 };
+  });
+  const selector = Array.from(target.attributes).filter(a => a.name.startsWith('data-')).map(a => `[${a.name}="${CSS.escape(a.value)}"]`).join('');
+  render();
+  if (modal.firstElementChild) modal.firstElementChild.scrollTop = top;
+  positions.forEach(p => { const el = modal.querySelector(p.selector); if (el) { el.scrollLeft = p.left; el.scrollTop = p.top; } });
+  if (selector) modal.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true });
+}
+
 function showMainMenu(): void {
   hud.classList.add('hidden');
-  modal.innerHTML = `
-    <div class="fullscreen-menu title-menu" data-testid="main-menu">
-      <div class="menu-art" aria-hidden="true"><div class="moon"></div><div class="mountains distant"></div><div class="mountains near"></div><div class="menu-party">${portrait('Ranger')}${portrait('Swordsman')}${portrait('Warrior')}</div><span>THE GREENMARCH FRONTIER</span></div>
-      <div class="menu-copy"><span class="eyebrow">A COMPANY. A CONTRACT. A LEGEND.</span><h1>Ironbound<br/><em>Chronicles</em></h1><p class="subtitle">Fortune favours the prepared.</p>
-      <p class="menu-description">Lead your company across an untamed frontier. Take contracts, build your camp, and make every turn count.</p>
-      ${button('New Company '+icon('arrow'), 'new-game', 'primary')}
-      <button class="btn continue-btn" data-action="continue" data-testid="continue-button" ${hasSave() ? '' : 'disabled'}>Continue your journey</button>
-      <div class="menu-foot"><span>TACTICAL RPG</span><span>DESKTOP & MOBILE</span></div></div>
-    </div>`;
+  modal.innerHTML = `<div class="fullscreen-menu title-menu" data-testid="main-menu"><img class="title-landscape scene-art" src="${sceneArt('frontier')}" alt=""/><div class="title-vignette"></div><div class="title-party" aria-hidden="true">${portrait('Ranger')}${portrait('Swordsman')}${portrait('Warrior')}</div><div class="menu-copy"><span class="eyebrow">TALES FROM THE GREENMARCH FRONTIER</span><div class="title-sigil" aria-hidden="true">${itemIcon('sword')}</div><h1>Ironbound<br/><em>Chronicles</em></h1><p class="subtitle">A company. A contract. A legend.</p>${button('New Company '+icon('arrow'), 'new-game', 'primary')}<button class="btn continue-btn" data-action="continue" data-testid="continue-button" ${hasSave() ? '' : 'disabled'}>Continue your journey</button><button class="title-help" data-action="help">Field manual</button></div><div class="title-footer"><span>TURN-BASED TACTICAL RPG</span><span>FORTUNE FAVOURS THE PREPARED</span></div></div>`;
 }
 
 function showHelp(): void {
@@ -302,17 +326,21 @@ function showNewGame(): void {
     </div>`;
 }
 
+
 function showInventory(): void {
   const s = ensureCoreSystems(getState());
-  const mercs = s.mercenaries.map(m => {
-    const relation = s.mercenaries.filter(o=>o.id!==m.id).map(o => `${o.name}: ${m.relations[o.id] ?? 0}`).join(' · ');
-    return `<div class="merc-card">
-      <div class="merc-heading">${portrait(m.class)}<div><strong>${escapeHtml(m.name)}</strong><span>${m.class} <b>LV ${m.level}</b></span></div></div>
-      <div class="merc-stats"><span>${icon('heart')} ${m.health}/${m.maxHealth}</span><span>${icon('shield')} ${m.armor}/${m.maxArmor}</span><span>${icon('sword')} ${totalAttack(m)}</span></div>
-      <div class="xp-track"><i style="width:${Math.min(100,m.xp/(100+(m.level-1)*80)*100)}%"></i></div><span>${m.xp} / ${100+(m.level-1)*80} XP to next level</span>
-      <span>Weapon: ${m.equipment.weapon?.name ?? 'None'} · Armor: ${m.equipment.armor?.name ?? 'None'}</span>
-      <span class="profession-summary">${m.profession ? `${m.profession.name} Lv ${m.profession.level} · ${m.profession.xp} XP` : 'No profession assigned'}</span>
-      <details class="merc-details"><summary>Training, profession & equipment care</summary>
+  const m = s.mercenaries.find(m => m.id === selectedMercId) ?? s.mercenaries[0];
+  if (!m) { modal.innerHTML = `<div class="panel"><header><h2>No companions</h2><button class="x" data-action="close">×</button></header><p>Recruit a companion in town.</p></div>`; return; }
+  selectedMercId = m.id;
+  const relation = s.mercenaries.filter(o=>o.id!==m.id).map(o => `${escapeHtml(o.name)}: ${m.relations[o.id] ?? 0}`).join(' · ');
+  const items = s.inventory.filter(i => inventoryFilter === 'all' || (inventoryFilter === 'supplies' ? !i.slot : i.slot === inventoryFilter));
+  const selected = items.find(i => i.id === selectedItemId) ?? items[0];
+  selectedItemId = selected?.id ?? '';
+  const inspector = selected ? `<div class="item-inspector rarity-${selected.rarity.toLowerCase()}"><div class="inspector-heading">${itemIcon(selected.name)}<div><span class="eyebrow">${selected.rarity} ${selected.slot ?? 'supplies'}</span><h3>${escapeHtml(selected.name)}</h3></div></div><p>${selected.power ? `+${selected.power} power · ` : ''}${selected.armor ? `+${selected.armor} armor · ` : ''}${selected.weight ?? 1} weight${selected.maxDurability ? ` · ${selected.durability ?? selected.maxDurability}/${selected.maxDurability} durability` : ''}</p><div class="equip-targets">${selected.slot ? s.mercenaries.filter(merc => canEquipItem(merc, selected)).map(merc => button(`Equip → ${escapeHtml(merc.name)}`, 'equip', 'mini equip-person', `data-item-id="${selected.id}" data-merc="${merc.id}"`)).join('') || '<span class="muted">No compatible mercenary</span>' : ''}${selected.food ? button(`Add ${selected.food} provisions`, 'use-item', 'mini', `data-item-id="${selected.id}"`) : ''}${['Repair Kit','Armor Reinforcement'].includes(selected.name) ? s.mercenaries.map(merc => button(`Use → ${escapeHtml(merc.name)}`, 'use-item', 'mini', `data-item-id="${selected.id}" data-merc="${merc.id}"`)).join('') : ''}</div>${button(`Sell · ${Math.floor(selected.value*.55)} crowns`, 'sell', 'sell-item', `data-item-id="${selected.id}"`)}</div>` : '<div class="empty-pack">No items in this section.<small>Find supplies while exploring the frontier.</small></div>';
+  modal.innerHTML = `<div class="panel wide company-screen" data-testid="inventory-panel"><header><div><small>${escapeHtml(s.companyName)}</small><h2>The Company</h2></div><span class="pack-weight">${itemIcon('pack')}${inventoryWeight(s).toFixed(1)} / ${carryingCapacity(s)}</span><button class="x" data-action="close">×</button></header>
+    <div class="company-layout"><nav class="companion-roster" aria-label="Choose a companion">${s.mercenaries.map(merc => `<button class="companion-token ${merc.id === m.id ? 'active' : ''}" data-action="select-merc" data-merc="${merc.id}" aria-label="View ${escapeHtml(merc.name)}" aria-pressed="${merc.id === m.id}">${portrait(merc.class)}<span><strong>${escapeHtml(merc.name)}</strong><small>${merc.class} · Lv ${merc.level}</small></span><i class="health-track"><i style="width:${Math.max(0,merc.health/merc.maxHealth)*100}%"></i></i></button>`).join('')}</nav>
+    <section class="character-sheet"><div class="character-title"><span class="eyebrow">${m.class} · LEVEL ${m.level}</span><h3>${escapeHtml(m.name)}</h3><small>${m.profession ? `${m.profession.name} Lv ${m.profession.level}` : 'No profession assigned'}</small></div><div class="paper-doll">${portrait(m.class,'character-art')}<span class="doll-ring" aria-hidden="true"></span>${(['weapon','armor','helmet','accessory'] as const).map(slot => {const item=m.equipment[slot];return `<div class="equipment-slot slot-${slot} ${item ? `rarity-${item.rarity.toLowerCase()}` : 'empty'}" title="${escapeHtml(item?.name ?? `Empty ${slot} slot`)}">${itemIcon(item?.name ?? slot)}<small>${item ? escapeHtml(item.name) : slot}</small>${item?.upgradeLevel ? `<b>+${item.upgradeLevel}</b>` : ''}</div>`;}).join('')}</div><div class="character-vitals"><div><span>Health <b>${m.health}/${m.maxHealth}</b></span><i class="vital-track"><i style="width:${Math.max(0,m.health/m.maxHealth)*100}%"></i></i></div><div><span>Armor <b>${m.armor}/${m.maxArmor}</b></span><i class="vital-track armor-track"><i style="width:${m.maxArmor ? Math.max(0,m.armor/m.maxArmor)*100 : 0}%"></i></i></div><strong class="attack-stat">${itemIcon('sword')} ${totalAttack(m)} <small>Attack</small></strong></div><div class="xp-track"><i style="width:${Math.min(100,m.xp/(100+(m.level-1)*80)*100)}%"></i></div><small class="xp-label">${m.xp} / ${100+(m.level-1)*80} experience</small>
+          <details class="merc-details"><summary>Training, profession & equipment care</summary>
       ${button('Manage professions', 'professions')}
       <span>Specialization: ${m.specialization ?? (m.level >= 3 ? 'Choose one' : 'Unlocks at Lv 3')}</span>
       <div>${!m.specialization && m.level>=3 ? availableSpecializations(m.class).map(sp=>`<button class="mini" data-action="specialize" data-merc="${m.id}" data-specialization="${sp}">${sp}</button>`).join('') : ''}</div>
@@ -328,26 +356,12 @@ function showInventory(): void {
       ${s.inventory.some(i=>i.name==='Poison Oil') && m.equipment.weapon ? `<button class="mini" data-action="apply-oil" data-merc="${m.id}">Apply Poison Oil</button>` : ''}</div>
       ${m.injury ? `<button class="mini" data-action="heal-injury" data-merc="${m.id}">Use Medicine</button>` : ''}
       <span>Relations: ${relation || 'No bonds yet'}</span></details>
-    </div>`;
-  }).join('');
-  const items = s.inventory.map(i => {
-    const compatible = i.slot ? s.mercenaries.filter(m => canEquipItem(m, i)) : [];
-    const equipButtons = i.slot
-      ? (compatible.length
-          ? compatible.map(m => `<button class="mini equip-person" data-action="equip" data-item-id="${i.id}" data-merc="${m.id}">Equip → ${m.name}</button>`).join('')
-          : '<span class="muted">No compatible mercenary</span>')
-      : '';
-    return `<div class="item-row rarity-${i.rarity.toLowerCase()}">
-      <div><strong>${i.name}</strong><span>${i.rarity}${i.power ? ` · +${i.power} power` : ''}${i.armor ? ` · +${i.armor} armor` : ''} · ${i.weight ?? 1} wt</span></div>
-      <div class="item-actions"><div class="equip-targets">${equipButtons}${i.food?`<button class="mini" data-action="use-item" data-item-id="${i.id}">Add ${i.food} provisions</button>`:''}${['Repair Kit','Armor Reinforcement'].includes(i.name)?s.mercenaries.map(m=>`<button class="mini" data-action="use-item" data-item-id="${i.id}" data-merc="${m.id}">Use → ${escapeHtml(m.name)}</button>`).join(''):''}</div><button class="mini" data-action="sell" data-item-id="${i.id}">Sell ${Math.floor(i.value * .55)}</button></div>
-    </div>`;
-  }).join('') || '<p>Inventory empty.</p>';
-  modal.innerHTML = `<div class="panel wide" data-testid="inventory-panel"><header><h2>Company · ${inventoryWeight(s).toFixed(1)}/${carryingCapacity(s)} weight</h2><button class="x" data-action="close">×</button></header><div class="workshop-footer">${button('Professions & daily work', 'professions', 'primary')}${button('Forge & upgrade equipment', 'forge')}</div><div class="two-col"><section><h3>Mercenaries & Professions</h3>${mercs}</section><section><h3>Pack</h3>${items}</section></div></div>`;
+    </section><section class="pack-section"><div class="section-title"><h3>Company Pack</h3><small>${s.inventory.length} items</small></div><div class="pack-filters" role="group" aria-label="Inventory category">${[['all','All'],['weapon','Weapons'],['armor','Armor'],['supplies','Supplies']].map(([value,label]) => `<button data-action="inventory-filter" data-filter="${value}" aria-pressed="${inventoryFilter === value}">${label}</button>`).join('')}</div><div class="inventory-slots" aria-label="Pack items">${items.map(i => `<button class="inventory-slot rarity-${i.rarity.toLowerCase()} ${selected?.id === i.id ? 'active' : ''}" data-action="select-item" data-item-id="${i.id}" aria-label="Inspect ${escapeHtml(i.name)}" aria-pressed="${selected?.id === i.id}" title="${escapeHtml(i.name)}">${itemIcon(i.name)}${i.upgradeLevel ? `<b>+${i.upgradeLevel}</b>` : ''}<small>${escapeHtml(i.name)}</small></button>`).join('')}${Array.from({length:Math.max(0,12-items.length)},()=>'<span class="inventory-slot vacant" aria-hidden="true"></span>').join('')}</div>${inspector}</section></div><footer class="workshop-footer">${button('Professions & daily work', 'professions')}${button('Forge & upgrade equipment', 'forge', 'primary')}</footer></div>`;
 }
 
 function showKnowledge(): void {
   const s = ensureCoreSystems(getState());
-  modal.innerHTML = `<div class="panel wide" data-testid="knowledge-panel"><header><h2>Knowledge & Paths</h2><button class="x" data-action="close">×</button></header>
+  modal.innerHTML = `<div class="panel wide knowledge-screen" data-testid="knowledge-panel"><header><h2>Knowledge & Paths</h2><button class="x" data-action="close">×</button></header>
     <p>Compendium: ${s.knowledge}/100 · Knowledge Points: <strong>${s.knowledgePoints}</strong></p>
     <div class="town-grid">
       ${Object.entries(s.paths).map(([name,p])=>`<div class="service"><h3>${name}</h3><p>Level ${p.level} · ${p.xp}/${p.level*60} XP · Path Points ${p.points}</p></div>`).join('')}
@@ -359,28 +373,20 @@ function showKnowledge(): void {
 function showQuests(): void {
   const s = getState();
   const list = s.quests.map(q => `<div class="quest-card"><strong>${q.name}</strong><p>${q.description}</p><div>${q.state.toUpperCase()} · ${q.progress}/${q.required}</div>${q.state === 'available' ? `<button class="mini" data-action="accept-quest" data-quest="${q.id}">Accept</button>` : ''}${q.state === 'active' && q.progress >= q.required ? `<button class="mini" data-action="turn-in" data-quest="${q.id}">Turn in</button>` : ''}<div class="reward">Reward: ${q.rewardCrowns} crowns · ${q.rewardXp} XP</div></div>`).join('');
-  modal.innerHTML = `<div class="panel" data-testid="quest-panel"><header><h2>Contracts</h2><button class="x" data-action="close">×</button></header>${list}</div>`;
+  modal.innerHTML = `<div class="panel journal-screen" data-testid="quest-panel"><header><h2>Contracts</h2><button class="x" data-action="close">×</button></header>${list}</div>`;
 }
 
 function showCamp(): void {
   const s = ensureCoreSystems(getState());
   const wages = wageTotal(s);
-  const build = facilities.filter(f=>!s.campFacilities.includes(f)).map(f => button(`Build ${f} (${CAMP_FACILITY_COSTS[f]})`, 'build-facility', '', `data-facility="${f}" ${s.crowns < CAMP_FACILITY_COSTS[f] ? 'disabled' : ''}`)).join('');
-  modal.innerHTML = `<div class="panel camp-panel wide" data-testid="camp-panel"><header><h2>Company Camp</h2><button class="x" data-action="close">×</button></header>
-    <div class="camp-art"><div class="fire">🔥</div>${s.mercenaries.slice(0,6).map((m,i)=>`<div class="camper c${i}">◆<span>${m.name}</span></div>`).join('')}</div>
-    <p>Fatigue <strong>${Math.round(s.fatigue)}/${s.maxFatigue}</strong> · Valor <strong>${s.valor}/${s.maxValor}</strong>. Rest costs <strong>${personalityFoodCost(s)} food</strong>; wages <strong>${wages}</strong> every third rest.</p>
-    <p>Animals: ${s.animals.map(a=>`${a.name} HP ${a.health}/${a.maxHealth}`).join(', ') || 'None'} · Ropes: ${s.ropes}</p>
-    <p>Facilities: ${s.campFacilities.join(', ')}</p>
-    ${materialStrip()}${workNotice()}
-    <div class="row">${button('Rest until morning', 'rest', 'primary')}${build}${s.mercenaries.length>1?button('Share a meal / Socialise','socialise'):''}${s.wantedLevel?button('Lay Low','lay-low'):''}</div>
-    <div class="workshop-summary"><div><h3>Company trades</h3><p>${s.mercenaries.filter(m => m.profession).map(m => `${escapeHtml(m.name)} · ${m.profession!.name} Lv ${m.profession!.level}`).join(' / ') || 'Assign a Cook, Blacksmith or other specialist to put your materials to use.'}</p><small>Cooks reduce rest food automatically. Daily work refreshes after resting.</small></div><div>${button('Professions & daily work', 'professions', 'primary')}${button('Forge & upgrade equipment', 'forge')}</div></div>
-    <h3>Tools & medicine <span class="muted">· ${s.torches} torches</span></h3>
-    <div class="recipe-grid">${Object.keys(recipeCosts).map(r => {
-      const status = craftRecipeStatus(s, r);
-      const use = r === 'Medicine' ? 'Treat a companion’s injury in Company.' : r === 'Poison Oil' ? 'Coat a weapon in Company to poison enemies.' : r === 'Torch' ? 'Spend one torch per tomb room.' : r === 'Repair Kit' ? 'Restore one companion’s equipped armor and durability.' : 'Give a companion +2 permanent armor.';
-      return `<article class="recipe-card"><h3>${r} ×${status.quantity}</h3><p>${use}</p><small>${costLabel(status.cost)}</small>${button(`Craft ${r}`, 'craft', 'primary', `data-recipe="${r}" ${status.reason ? 'disabled' : ''}`)}<small class="requirement">${status.reason ?? (status.worker ? `${escapeHtml(status.worker.name)} · +15 profession XP` : 'Basic recipe · no profession required')}</small></article>`;
-    }).join('')}</div>
-  </div>`;
+  const supplies = Object.keys(recipeCosts).map(r => {
+    const status = craftRecipeStatus(s, r);
+    const use = r === 'Medicine' ? 'Treat a companion’s injury.' : r === 'Poison Oil' ? 'Coat a weapon to poison enemies.' : r === 'Torch' ? 'Light your way through tomb rooms.' : r === 'Repair Kit' ? 'Restore armor and durability.' : '+2 permanent armor for a companion.';
+    return `<article class="supply-recipe">${itemIcon(r)}<div><strong>${r} ×${status.quantity}</strong><p>${use}</p><small>${costLabel(status.cost)}</small><small class="requirement">${status.reason ?? (status.worker ? `${escapeHtml(status.worker.name)} · +15 profession XP` : 'Basic recipe')}</small></div>${button(`Craft ${r}`, 'craft', '', `data-recipe="${r}" ${status.reason ? 'disabled' : ''}`)}</article>`;
+  }).join('');
+  const facilityList = facilities.map(f => `<article class="supply-recipe">${itemIcon(f)}<div><strong>${f.replace(/([a-z])([A-Z])/g,'$1 $2')}</strong><small>${s.campFacilities.includes(f) ? 'Built in your camp' : `${CAMP_FACILITY_COSTS[f]} crowns`}</small></div>${s.campFacilities.includes(f) ? '<span class="built-label">✓ Built</span>' : button(`Build ${f}`, 'build-facility', '', `data-facility="${f}" ${s.crowns < CAMP_FACILITY_COSTS[f] ? 'disabled' : ''}`)}</article>`).join('');
+  const companions = `<div class="camp-companions">${s.mercenaries.map(m => `<div>${portrait(m.class)}<strong>${escapeHtml(m.name)}</strong><small>${m.profession ? `${m.profession.name} Lv ${m.profession.level}` : 'No trade assigned'}</small></div>`).join('')}</div><p>${s.animals.length ? `Animals: ${s.animals.map(a => `${escapeHtml(a.name)} · ${a.health}/${a.maxHealth} HP`).join(', ')}` : 'Your companions gather around the fire.'} · ${s.ropes} ropes</p><div class="row">${s.mercenaries.length>1 ? button('Share a meal / Socialise','socialise') : ''}${s.wantedLevel ? button('Lay Low','lay-low') : ''}</div>`;
+  modal.innerHTML = `<div class="panel camp-panel wide camp-screen" data-testid="camp-panel"><header><div><small>DAY ${s.day} · ${s.currentRegion}</small><h2>A Moment by the Fire</h2></div><button class="x" data-action="close">×</button></header><div class="camp-scene"><img class="scene-art" src="${sceneArt('camp')}" alt="Tents, a campfire and an anvil at the edge of the forest"/><span class="camp-glow" aria-hidden="true"></span>${s.mercenaries.slice(0,5).map((m,i)=>`<span class="scene-companion" style="left:${34+i*9}%;bottom:${9+i%2*9}%" title="${escapeHtml(m.name)}">${portrait(m.class)}</span>`).join('')}${button(`${itemIcon('tent')}<span>Rest<small>${personalityFoodCost(s)} food</small></span>`, 'rest', 'scene-hotspot tent-hotspot', 'aria-label="Rest until morning"')}${button(`${itemIcon('food')}<span>Daily work<small>Company trades</small></span>`, 'professions', 'scene-hotspot fire-hotspot', 'aria-label="Professions & daily work"')}${button(`${itemIcon('forge')}<span>Forge<small>Craft & upgrade</small></span>`, 'forge', 'scene-hotspot forge-hotspot', 'aria-label="Forge & upgrade equipment"')}</div><div class="camp-status"><span>${itemIcon('heart')} ${Math.round(s.fatigue)} / ${s.maxFatigue} fatigue</span><span>${icon('star')} ${s.valor} / ${s.maxValor} Valor</span><span>${itemIcon('coin')} ${wages} wages / 3 rests</span><span>${itemIcon('torch')} ${s.torches} torches</span></div>${materialStrip()}${workNotice()}<div class="workshop-tabs camp-tabs" role="group" aria-label="Camp ledger">${[['supplies','Tools & medicine'],['facilities','Camp facilities'],['companions','Around the fire']].map(([tab,label]) => button(label,'camp-tab',campTab === tab ? 'selected-skill' : '',`data-tab="${tab}" aria-pressed="${campTab === tab}"`)).join('')}</div><div class="camp-ledger">${campTab === 'facilities' ? facilityList : campTab === 'companions' ? companions : supplies}</div></div>`;
 }
 
 function showTown(name: string): void {
@@ -391,21 +397,21 @@ function showTown(name: string): void {
   const trade = ['wool','salt','spice'].map(g=>`<div class="item-row"><div><strong>${g}</strong><span>Buy ${tradePrice(s.currentRegion,g)} · Sell ${tradeSellPrice(s.currentRegion,g,s.unlockedKnowledge.includes('merchant-instinct'))} · Held ${s.tradeGoods[g] ?? 0}</span></div><div><button class="mini" data-action="buy-trade" data-good="${g}">Buy</button><button class="mini" data-action="sell-trade" data-good="${g}">Sell</button></div></div>`).join('');
   const prisoners = s.prisoners.map(p=>`<button class="mini" data-action="turn-prisoner" data-prisoner="${p.id}">Turn in ${p.name} (+${p.bounty})</button>`).join('') || '<span class="muted">No prisoners.</span>';
   modal.innerHTML = `<div class="panel wide town-panel" data-testid="town-panel"><header><div><small>Settlement · ${s.currentRegion}</small><h2>${name}</h2></div><button class="x" data-action="close">×</button></header>
-    <div class="town-grid">
-      <div class="service"><h3>🍺 Tavern & Stable</h3><p>Recruit mercenaries with crowns + Influence, buy pack animals and rope.</p>${button('Recruit Kestrel', 'recruit')}${button('Buy Pack Pony (90)', 'buy-pony')}${button('Buy Rope (8)', 'buy-rope')}</div>
-      <div class="service"><h3>⚒ Blacksmith</h3><p>Forge weapons and armor with your company Blacksmith, or upgrade existing gear to +3.</p>${button('Forge & upgrade equipment', 'forge', 'primary')}${button('Repair all', 'repair')}${button('Assign professions', 'professions')}</div>
-      <div class="service"><h3>🧺 Market & Trade</h3><p>6 food for 12 crowns. Regional prices create caravan opportunities.</p>${button('Buy provisions', 'buy-food')}${trade}${button(locationProgress(s, currentTownId).lastStealDay === s.day ? 'Market on alert until tomorrow' : 'Steal supplies', 'steal', 'danger', locationProgress(s, currentTownId).lastStealDay === s.day ? 'disabled' : '')}<small>A Thief reduces suspicion. One attempt here per day.</small></div>
-      <div class="service"><h3>📜 Contract Board</h3><p>${q.name} — ${q.state}</p>${q.state==='available' ? button('Accept contract','accept-town-quest') : q.state==='active'&&q.progress>=q.required ? button('Claim reward','turn-in-town-quest','primary') : '<span class="muted">Return after defeating the target.</span>'}</div>
-      <div class="service"><h3>⚖ Watch House</h3><p>Suspicion ${Math.round(s.suspicion)} · Wanted level ${s.wantedLevel}</p>${prisoners}</div>
+    ${sceneBanner('town', 'A SAFE HAVEN ON THE FRONTIER')}<div class="town-grid">
+      <div class="service"><h3>${itemIcon('food')} Tavern & Stable</h3><p>Recruit mercenaries with crowns + Influence, buy pack animals and rope.</p>${button('Recruit Kestrel', 'recruit')}${button('Buy Pack Pony (90)', 'buy-pony')}${button('Buy Rope (8)', 'buy-rope')}</div>
+      <div class="service"><h3>${itemIcon('forge')} Blacksmith</h3><p>Forge weapons and armor with your company Blacksmith, or upgrade existing gear to +3.</p>${button('Forge & upgrade equipment', 'forge', 'primary')}${button('Repair all', 'repair')}${button('Assign professions', 'professions')}</div>
+      <div class="service"><h3>${itemIcon('pack')} Market & Trade</h3><p>6 food for 12 crowns. Regional prices create caravan opportunities.</p>${button('Buy provisions', 'buy-food')}${trade}${button(locationProgress(s, currentTownId).lastStealDay === s.day ? 'Market on alert until tomorrow' : 'Steal supplies', 'steal', 'danger', locationProgress(s, currentTownId).lastStealDay === s.day ? 'disabled' : '')}<small>A Thief reduces suspicion. One attempt here per day.</small></div>
+      <div class="service"><h3>${itemIcon('scroll')} Contract Board</h3><p>${q.name} — ${q.state}</p>${q.state==='available' ? button('Accept contract','accept-town-quest') : q.state==='active'&&q.progress>=q.required ? button('Claim reward','turn-in-town-quest','primary') : '<span class="muted">Return after defeating the target.</span>'}</div>
+      <div class="service"><h3>${itemIcon('shield')} Watch House</h3><p>Suspicion ${Math.round(s.suspicion)} · Wanted level ${s.wantedLevel}</p>${prisoners}</div>
       <div class="service"><h3>Workshop supplies</h3><p>Buy materials in bundles of three. Gather grain and timber at the Old Mill; mine iron at the Iron Mine.</p>${Object.entries(MATERIAL_PRICES).map(([material, price]) => `<div class="item-row"><div><strong>${material}</strong><span>Held ${s.materials[material] ?? 0}</span></div><button class="mini" data-action="buy-material" data-material="${material}" ${s.crowns < price * 3 ? 'disabled' : ''}>Buy 3 · ${price * 3} crowns</button></div>`).join('')}</div>
-    </div><footer>👑 ${s.crowns} · ✦ ${s.influence} Influence · 🍞 ${s.food} · 🐴 ${s.ponies.length}</footer></div>`;
+    </div><footer class="town-footer">${materialStrip()}<small>${s.influence} Influence · ${s.ponies.length} pack ponies</small></footer></div>`;
 }
 
 function showTomb(id: string, name: string): void {
   const s = ensureCoreSystems(getState());
   const t = s.tombs.find(t=>t.id===id);
-  modal.innerHTML = `<div class="panel" data-testid="tomb-panel"><header><h2>🗿 ${name}</h2><button class="x" data-action="close">×</button></header>
-    <p>Dark ruins require torches. Search rooms for codices, knowledge and relics. ${bestProfessional(s, 'Scholar') ? `Scholar bonus: +${bestProfessional(s, 'Scholar')!.profession!.level * 10} knowledge per room, +20 profession XP.` : 'Assign a Scholar for extra knowledge in every room.'}</p>
+  modal.innerHTML = `<div class="panel" data-testid="tomb-panel"><header><h2>${name}</h2><button class="x" data-action="close">×</button></header>
+    ${sceneBanner('tomb','THE OLD KINGDOM LIES BELOW')}<p>Dark ruins require torches. Search rooms for codices, knowledge and relics. ${bestProfessional(s, 'Scholar') ? `Scholar bonus: +${bestProfessional(s, 'Scholar')!.profession!.level * 10} knowledge per room, +20 profession XP.` : 'Assign a Scholar for extra knowledge in every room.'}</p>
     <p>Rooms: ${t?.roomsExplored ?? 0}/${t?.totalRooms ?? '?'} · Codices: ${t?.codices ?? 0}/3 · Torches: ${s.torches}</p>
     ${button(t?.completed?'Tomb cleared':'Explore next room · 1 torch','explore-tomb','primary',`data-tomb="${id}" ${t?.completed || s.torches < 1 ? 'disabled' : ''}`)}
     <p class="requirement">${t?.completed ? 'All rooms explored. Your relic and rewards have been collected. You can revisit this tomb any time.' : s.torches < 1 ? 'Craft more torches at camp to continue exploring.' : 'Progress is saved after every room.'}</p>
@@ -414,7 +420,7 @@ function showTomb(id: string, name: string): void {
 }
 
 function showEncounter(enemy: { id: string; kind: string; strength: number }): void {
-  modal.innerHTML = `<div class="encounter panel" data-testid="encounter-panel"><div class="crest small">⚔</div><h2>${enemy.kind === 'wolf' ? 'Wolf Pack' : enemy.kind === 'raider' ? 'Raider Warband' : 'Bandit Patrol'}</h2><p>Threat level ${enemy.strength}. The hostile group blocks your path.</p><div class="row">${button('Fight', `fight:${enemy.id}`, 'danger')}${button('Flee', 'flee')}</div></div>`;
+  modal.innerHTML = `<div class="encounter panel" data-testid="encounter-panel"><div class="encounter-sigil">${itemIcon('sword')}</div><h2>${enemy.kind === 'wolf' ? 'Wolf Pack' : enemy.kind === 'raider' ? 'Raider Warband' : 'Bandit Patrol'}</h2><p>Threat level ${enemy.strength}. The hostile group blocks your path.</p><div class="row">${button('Fight', `fight:${enemy.id}`, 'danger')}${button('Flee', 'flee')}</div></div>`;
 }
 
 function showVictory(detail: any): void {
@@ -422,7 +428,7 @@ function showVictory(detail: any): void {
   const capture = currentVictoryKind === 'wolf'
     ? button('Capture Wolf (1 rope)', 'capture-animal')
     : currentVictoryKind ? button('Capture a survivor', 'capture-prisoner') : '';
-  modal.innerHTML = `<div class="panel victory" data-testid="victory-panel"><div class="crest">✦</div><h2>Victory</h2><p>Your company controls the field.</p><p><strong>Loot:</strong> ${detail.crowns} crowns · ${detail.items.join(', ') || 'supplies'}</p><div class="row">${capture}${button('Take all and continue', 'continue-battle', 'primary')}</div></div>`;
+  modal.innerHTML = `<div class="panel victory" data-testid="victory-panel"><div class="victory-sigil">${itemIcon('coin')}</div><h2>Victory</h2><p>Your company controls the field.</p><p><strong>Loot:</strong> ${detail.crowns} crowns · ${detail.items.join(', ') || 'supplies'}</p><div class="row">${capture}${button('Take all and continue', 'continue-battle', 'primary')}</div></div>`;
 }
 
 function showDefeat(): void {
@@ -478,7 +484,7 @@ window.addEventListener('ironbound:ui', (ev: Event) => {
 document.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLElement && e.target.closest('input, select, textarea, [contenteditable]')) return;
   if (e.key === 'Escape') {
-    if (modal.querySelector('.panel:not(.encounter):not(.victory)')) closeModal();
+    if (modal.querySelector('.panel:not(.encounter):not(.victory)')) { closeModal(); if (!game) showMainMenu(); }
     else if (!modal.childElementCount) scene?.cancelBattleSkill();
   }
   if (e.key === 'Tab' && modal.childElementCount) {
@@ -538,6 +544,13 @@ document.addEventListener('click', (e) => {
     closeModal(); bootGame();
   }
   else if (action === 'inventory') showInventory();
+  else if (action === 'select-merc') { selectedMercId = target.dataset.merc!; refreshPanel(showInventory, target); }
+  else if (action === 'select-item') { selectedItemId = target.dataset.itemId!; refreshPanel(showInventory, target); }
+  else if (action === 'inventory-filter') { inventoryFilter = target.dataset.filter!; selectedItemId = ''; refreshPanel(showInventory, target); }
+  else if (action === 'forge-choice') { selectedRecipeId = target.dataset.recipe!; refreshPanel(() => showForge('craft'), target); }
+  else if (action === 'upgrade-choice') { selectedForgeItemId = target.dataset.itemId!; refreshPanel(() => showForge('upgrade'), target); }
+  else if (action === 'map-select') { selectedLocationId = target.dataset.location!; refreshPanel(showExplore, target); }
+  else if (action === 'camp-tab') { campTab = target.dataset.tab!; refreshPanel(showCamp, target); }
   else if (action === 'quests') showQuests();
   else if (action === 'knowledge') showKnowledge();
   else if (action === 'camp') showCamp();
@@ -546,7 +559,12 @@ document.addEventListener('click', (e) => {
   else if (action === 'forge-tab') showForge(target.dataset.tab === 'upgrade' ? 'upgrade' : 'craft');
   else if (action === 'forge-equipment' || action === 'upgrade-equipment') {
     const scrollTop = modal.firstElementChild?.scrollTop ?? 0;
-    const result = action === 'forge-equipment' ? forgeEquipment(s, target.dataset.recipe!) : upgradeEquipment(s, target.dataset.itemId!);
+    const result: ReturnType<typeof forgeEquipment> = action === 'forge-equipment' ? forgeEquipment(s, target.dataset.recipe!) : upgradeEquipment(s, target.dataset.itemId!);
+    if (result.item) {
+      selectedForgeItemId = result.item.id;
+      selectedItemId = result.item.id;
+      inventoryFilter = 'all';
+    }
     workshopNotice = result.message;
     showToast(result.message); saveGame(); showForge();
     if (modal.firstElementChild) modal.firstElementChild.scrollTop = scrollTop;
@@ -559,7 +577,7 @@ document.addEventListener('click', (e) => {
     const result = exploreSite(s, target.dataset.location!, target.dataset.siteAction as SiteAction);
     siteNotice = result.message; showToast(result.message); saveGame(); showLocation(target.dataset.location!);
   }
-  else if (action === 'close') closeModal();
+  else if (action === 'close') { closeModal(); if (!game) showMainMenu(); }
   else if (action === 'help') showHelp();
   else if (action === 'save') showToast(saveGame() ? 'Journey saved.' : 'Unable to save. Browser storage may be full or disabled.');
   else if (action === 'select-unit') scene?.selectUnit(target.dataset.unit!);
@@ -644,6 +662,7 @@ document.addEventListener('click', (e) => {
     const item = s.inventory.find(i => i.id === target.dataset.itemId);
     const merc = s.mercenaries.find(m => m.id === target.dataset.merc);
     if (item && merc && equipItem(s, merc.id, item.id)) {
+      selectedMercId = merc.id;
       saveGame();
       showToast(`${item.name} equipped on ${merc.name}.`);
     } else {
