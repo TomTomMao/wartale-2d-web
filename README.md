@@ -53,6 +53,8 @@ Battle: select a mercenary from the field or roster; tap a blue tile to move and
 - `src/store.ts` — persistence
 - `src/game.ts` — Phaser world and tactical battle
 - `src/main.ts` — UI and orchestration
+- `src/gameUi.css` — responsive game frames, character sheets, camp and atlas layouts
+- `src/gameArt.ts` — cached native pixel scenes and item sprites
 - `tests/domain.test.ts` — unit tests
 - `tests/e2e/game.spec.ts` — Playwright smoke scenarios
 
@@ -63,7 +65,7 @@ The game supports touch-first play on modern mobile browsers.
 
 - Tap the world to move the company.
 - Use the fixed bottom navigation for Company, Explore, Contracts, Knowledge, Camp and Save.
-- Town, inventory, camp and knowledge screens open as mobile bottom sheets.
+- Town, inventory, camp and knowledge screens use framed, scrollable game panels on mobile.
 - In battle, tap a blue unit, tap a valid location to move, then tap an enemy to attack.
 - Battle actions are fixed above the safe-area at the bottom of the screen.
 - Responsive tactical deployment keeps both sides visible on narrow portrait displays.
@@ -85,7 +87,7 @@ The game supports touch-first play on modern mobile browsers.
 
 ### Verification
 
-The suite covers 106 unit tests and 20 Chromium browser scenarios, including real battle inputs through victory, contract rewards, saving and reloading. Mobile checks cover a 390×844 touch viewport and rotation to landscape. These checks are browser emulation, not physical iPhone/Safari testing.
+The suite covers 106 unit tests and 23 Chromium browser scenarios, including real battle inputs through victory, contract rewards, saving and reloading. Mobile checks cover a 390×844 touch viewport and rotation to landscape. These checks are browser emulation, not physical iPhone/Safari testing.
 
 See [CHANGELOG.md](CHANGELOG.md) for the bug fixes and intentional rule changes.
 
@@ -104,7 +106,7 @@ Open **Company → Professions & daily work** to choose each companion’s trade
 | Scholar | Daily knowledge research, +15 with a Lectern; +10 knowledge per level in each tomb room; extra battlefield research. |
 | Thief | Opens caches without paying iron; earns crowns from daily fencing; reduces suspicion from market theft. |
 
-**Explore** opens the field journal. All 11 locations can be entered and revisited, including those already discovered in old saves. The Old Mill yields grain and timber; the Iron Mine yields ore. Both refresh after resting. The Bandit Camp and Ruined Keep have garrisons that must be defeated before searching. Battlefield salvage and locked caches are one-time rewards. Cleared tombs remain accessible, but cannot pay out again.
+**Explore** opens the parchment atlas. Select a location marker, then choose Travel or Enter. All 11 locations can be entered and revisited, including those already discovered in old saves. The Old Mill yields grain and timber; the Iron Mine yields ore. Both refresh after resting. The Bandit Camp and Ruined Keep have garrisons that must be defeated before searching. Battlefield salvage and locked caches are one-time rewards. Cleared tombs remain accessible, but cannot pay out again.
 
 **Camp / Town / Company → Forge & Upgrade** opens the equipment workshop. Assign a Blacksmith, gather materials or buy bundles at a town market, then forge a sword, axe, bow, spear, dagger or armor. Equipment is added to the pack; choose a compatible companion in Company to equip it. Existing equipped and pack gear can both be upgraded:
 
@@ -115,3 +117,19 @@ Open **Company → Professions & daily work** to choose each companion’s trade
 | +3 | Lv 3 | 36 crowns, 6 iron, 3 wood or leather | Another +2 power or +3 armor |
 
 Upgrades preserve damage and innate armor bonuses; repairing is a separate action. Forge recipes award 20 profession XP, upgrades 25. Old saves keep equipment, professions, completed tombs and discoveries; new location progress is initialized on entry.
+
+
+## Game interface
+
+The interface uses original pixel scenery, brass-edged game panels and a parchment atlas. No external image or font service is required.
+
+- **Company:** select a companion to see their character sheet and equipment slots. Select an item in the pack grid, then choose a compatible companion to equip it. Filters separate weapons, armor and supplies; training and equipment care remain in the character's expandable section.
+- **Camp:** the tent rests the company, the campfire opens daily profession work, and the anvil opens forging. The camp ledger switches between tools, facilities and companions.
+- **Forge:** choose a design from the recipe book, inspect its cost and requirements, then forge at the anvil. Upgrade equipment includes both pack and equipped items. Newly forged gear is automatically selected for upgrading or equipping.
+- **Explore:** select a marker on the atlas to inspect its location and progress. Travel is a separate action so browsing the map never moves the company by accident.
+- **Controls:** framed party portraits, item sprites and compact command slots leave the world visible. Guard and End Unit remain available beside the scrolling battle skills.
+- Slot, recipe, roster and map selections retain keyboard focus and scroll position. Panels support portrait, tablet and landscape screens; reduced-motion settings disable camp animation.
+
+![Company character sheet and pack](docs/screenshots/company.png)
+![Interactive company camp](docs/screenshots/camp.png)
+![Frontier atlas](docs/screenshots/atlas.png)
