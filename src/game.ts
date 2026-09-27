@@ -262,7 +262,9 @@ export class GameScene extends Phaser.Scene {
   update(_time: number, delta: number): void {
     if (this.mode !== 'world' || !this.party || !this.keys) return;
     if (this.uiOpen() || this.encounterEnemy) { this.pauseWorldTravel(); return; }
-    delta = Math.min(delta, 80);
+    // Phaser smooths/caps early frames to 60 Hz, which slows travel on low-FPS devices.
+    // Use elapsed frame time for the world, while bounding any background-tab gap.
+    delta = Math.min(this.game.loop.rawDelta || delta, 80);
     this.hudElapsed += delta;
     if (this.hudElapsed >= 500) { this.hudElapsed = 0; this.emit({ type: 'worldHud' }); }
     const state = getState();
@@ -1190,12 +1192,12 @@ export class GameScene extends Phaser.Scene {
     this.paintParty(cell, cell, 0, false); this.cameras.main.centerOn(point.x, point.y); this.checkDiscoveries();
   }
 
-  testWorldSnapshot(): unknown {
+  testWorldSnapshot(includeTerrain = false): unknown {
     const state = getState(), camera = this.cameras.main;
     return { cell: worldCell(state.worldX, state.worldY), tileSize: WORLD_TILE_SIZE,
       step: this.worldStep, route: this.worldRoute, facing: this.facing, gridVisible: this.showWorldGrid,
       camera: { scrollX: camera.scrollX, scrollY: camera.scrollY, zoom: camera.zoom, width: camera.width, height: camera.height },
-      tiles: this.world.tiles.map(row => row.map(t => ({ ...t }))),
+      tiles: includeTerrain ? this.world.tiles.map(row => row.map(t => ({ ...t }))) : undefined,
       entrances: LOCATIONS.map(l => ({ id: l.id, ...locationCell(l.id) })),
       enemies: state.enemies.filter(e => e.alive).map(e => ({ id: e.id, ...worldCell(e.x, e.y) })) };
   }

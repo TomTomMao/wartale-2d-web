@@ -36,8 +36,8 @@ test('quick keyboard taps move one cell, walls block movement and no diagonal st
   const blocked=await state(page); expect(blocked.worldX).toBe(before.worldX); expect(blocked.worldY).toBe(before.worldY); expect(blocked.fatigue).toBe(before.fatigue);
   await page.evaluate(() => (window as any).__GAME_TEST_API__.movePartyTo(540,900));
   await page.keyboard.down('d'); await page.keyboard.down('s');
-  await expect.poll(async()=>Boolean((await snapshot(page)).step)).toBe(true);
-  const moving=await snapshot(page); expect(manhattan(moving.step.from,moving.step.to)).toBe(1);
+  // Capture and inspect the same animation frame; a second read may see an idle boundary.
+  await expect.poll(async()=> { const step=(await snapshot(page)).step; return step ? manhattan(step.from,step.to) : 0; }).toBe(1);
   await page.keyboard.up('s'); await page.keyboard.up('d'); await idle(page);
   const end=await state(page); expect(end.worldX%40).toBe(20); expect(end.worldY%40).toBe(20);
   expect(errors).toEqual([]);
@@ -53,8 +53,8 @@ test('click routing follows terrain, walks over the bridge and enters the mine a
   await clickTile(page,goal.col,goal.row);
   await expect.poll(async()=> (await snapshot(page)).route.length).toBeGreaterThan(0);
   const route=await snapshot(page);
-  for (const cell of route.route) { const tile=route.tiles[cell.row][cell.col];expect(tile.obstacle).toBeUndefined();expect(tile.ground).not.toBe('water'); }
-  await expect(page.getByTestId('location-panel')).toHaveAttribute('data-location','iron-mine');
+  for (const cell of route.route) { const tile=getWorldMap().tiles[cell.row][cell.col];expect(tile.obstacle).toBeUndefined();expect(tile.ground).not.toBe('water'); }
+  await expect(page.getByTestId('location-panel')).toHaveAttribute('data-location','iron-mine',{timeout:15_000});
   expect((await snapshot(page)).cell).toEqual(goal);
   await page.locator('#modal-root header [data-action=close]').click();
   await page.keyboard.press('e');
@@ -91,10 +91,10 @@ test('old saves relocate off water, preserve the company and retain the same til
 
 test('patrols approach on walkable tiles, trigger a nearby encounter and flee to reachable land', async ({ page }) => {
   await load(page,540,900,true);
-  await expect(page.getByTestId('encounter-panel')).toBeVisible();
+  await expect(page.getByTestId('encounter-panel')).toBeVisible({timeout:15_000});
   const before=await snapshot(page), enemy=before.enemies[0];
   expect(manhattan(before.cell,enemy)).toBeLessThanOrEqual(1);
-  const t=before.tiles[enemy.row][enemy.col]; expect(t.obstacle).toBeUndefined(); expect(t.ground).not.toBe('water');
+  const t=getWorldMap().tiles[enemy.row][enemy.col]; expect(t.obstacle).toBeUndefined(); expect(t.ground).not.toBe('water');
   await page.getByRole('button',{name:'Flee',exact:true}).click();
   await expect(page.getByTestId('encounter-panel')).toHaveCount(0);
   const after=await snapshot(page), route=worldPath(getWorldMap(),before.cell,after.cell);

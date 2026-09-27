@@ -439,7 +439,7 @@ function showDefeat(): void {
 function exposeTestApi(): void {
   (window as any).__GAME_TEST_API__ = {
     getGameState: () => scene?.getSnapshot(),
-    worldSnapshot: () => scene?.testWorldSnapshot(),
+    worldSnapshot: (includeTerrain = false) => scene?.testWorldSnapshot(includeTerrain),
     movePartyTo: (x: number, y: number) => scene?.testMovePartyTo(x,y),
     triggerEncounter: (id = 'bandit-1') => scene?.testTriggerEncounter(id),
     battleSnapshot: () => scene?.testBattleSnapshot(),
