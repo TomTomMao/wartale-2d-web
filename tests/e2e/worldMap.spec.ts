@@ -30,6 +30,10 @@ test('quick keyboard taps move one cell, walls block movement and no diagonal st
   await expect.poll(async()=> (await snapshot(page)).cell).toEqual({col:start.cell.col+1,row:start.cell.row});
   await idle(page); const once=await state(page); await page.waitForTimeout(230);
   expect((await state(page)).worldX).toBe(once.worldX);
+  for (const [key,panel] of [['i','inventory-panel'],['q','quest-panel'],['r','camp-panel']]) {
+    await page.keyboard.press(key); await expect(page.getByTestId(panel)).toBeVisible();
+    await page.keyboard.press('Escape'); await expect(page.getByTestId(panel)).toHaveCount(0);
+  }
   // Face the west edge of Stonebridge's main building. It occupies row 19.
   await page.evaluate(() => (window as any).__GAME_TEST_API__.movePartyTo(540,820));
   const before=await state(page); await page.keyboard.down('ArrowUp'); await page.waitForTimeout(450); await page.keyboard.up('ArrowUp');

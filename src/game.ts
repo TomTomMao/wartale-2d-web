@@ -26,7 +26,6 @@ type WorldStep = { from: GridCell; to: GridCell; elapsed: number; duration: numb
 export class GameScene extends Phaser.Scene {
   private mode: Mode = 'world';
   private party?: Phaser.GameObjects.Container;
-  private keys?: Record<string, Phaser.Input.Keyboard.Key>;
   private world = getWorldMap();
   private worldLayer?: Phaser.Tilemaps.TilemapLayer;
   private worldGrid?: Phaser.GameObjects.Graphics;
@@ -124,7 +123,6 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.centerOn(point.x, point.y);
     this.createEnemies();
     this.checkDiscoveries();
-    this.keys = this.input.keyboard?.addKeys('I,Q,R') as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (this.mode !== 'world' || this.uiOpen() || this.encounterEnemy) return;
       const pos = p.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
@@ -220,6 +218,12 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  openWorldMenu(type: 'inventory' | 'quests' | 'camp'): void {
+    if (this.mode !== 'world' || this.uiOpen() || this.encounterEnemy) return;
+    this.pauseWorldTravel();
+    this.emit({ type });
+  }
+
   pauseWorldTravel(): void {
     if (this.mode !== 'world') return;
     this.worldRoute = []; this.worldStep = undefined; this.destinationLocation = undefined;
@@ -260,7 +264,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
-    if (this.mode !== 'world' || !this.party || !this.keys) return;
+    if (this.mode !== 'world' || !this.party) return;
     if (this.uiOpen() || this.encounterEnemy) { this.pauseWorldTravel(); return; }
     // Phaser smooths/caps early frames to 60 Hz, which slows travel on low-FPS devices.
     // Use elapsed frame time for the world, while bounding any background-tab gap.
@@ -299,9 +303,6 @@ export class GameScene extends Phaser.Scene {
     this.checkDiscoveries();
     this.checkEncounter();
     if (this.encounterEnemy) return;
-    if (Phaser.Input.Keyboard.JustDown(this.keys.I)) this.emit({ type: 'inventory' });
-    if (Phaser.Input.Keyboard.JustDown(this.keys.Q)) this.emit({ type: 'quests' });
-    if (Phaser.Input.Keyboard.JustDown(this.keys.R)) this.emit({ type: 'camp' });
   }
 
   private updateEnemies(delta: number): void {

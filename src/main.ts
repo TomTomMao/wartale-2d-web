@@ -522,6 +522,10 @@ document.addEventListener('keydown', (e) => {
     if (!e.repeat) { heldMovementKeys.set(e.key.toLowerCase(), movement); scene?.setWorldDirection(movement); }
     return;
   }
+  const worldMenu = ({ i:'inventory', q:'quests', r:'camp' } as const)[e.key.toLowerCase() as 'i' | 'q' | 'r'];
+  if (worldMenu && !modal.childElementCount && !lastBattleHud && !e.repeat) {
+    e.preventDefault(); scene?.openWorldMenu(worldMenu); return;
+  }
   if (e.key === 'Escape') {
     if (modal.querySelector('.panel:not(.encounter):not(.victory)')) { closeModal(); if (!game) showMainMenu(); }
     else if (!modal.childElementCount) scene?.cancelBattleSkill();
