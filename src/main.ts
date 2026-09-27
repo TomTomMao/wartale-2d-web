@@ -6,6 +6,7 @@ import { itemIcon, sceneArt, sceneBanner } from './gameArt';
 import { icon, escapeHtml } from './ui';
 import { LOCATIONS, WORLD_WIDTH, WORLD_HEIGHT } from './data';
 import { GameScene } from './game';
+import { worldMapOverview, type WorldDirection } from './worldMap';
 import { acceptQuest, buyFood, canEquipItem, equipItem, recruit, repairAll, rest, sellItem, totalAttack, turnInQuest, useItem } from './domain';
 import { getState, hasSave, loadGame, resetSave, saveGame, startNewGame } from './store';
 import {
@@ -122,8 +123,7 @@ function renderWorldHud(): void {
     </aside>
     <div class="world-map" aria-label="Map of the frontier"><span class="eyebrow">${s.currentRegion}</span>
       <svg viewBox="0 0 160 110" role="img" aria-label="Your company and known settlements">
-        <path d="M18 48 34 41 52 38 73 45 105 59 135 85" fill="none" stroke="#7f7855" stroke-width="2"/>
-        <path d="M55 0 49 25 59 45 52 75 61 110" fill="none" stroke="#45666b" stroke-width="3"/>
+        <g transform="scale(.25)" shape-rendering="crispEdges">${worldMapOverview()}</g>
         ${LOCATIONS.filter(l=>l.type==='town').map(l=>`<rect x="${l.x/WORLD_WIDTH*160-2}" y="${l.y/WORLD_HEIGHT*110-2}" width="4" height="4" fill="#cbb985"/>`).join('')}
         ${s.enemies.filter(e=>e.alive && Math.hypot(s.worldX-e.x,s.worldY-e.y)<550).map(e=>`<circle cx="${e.x/WORLD_WIDTH*160}" cy="${e.y/WORLD_HEIGHT*110}" r="2" fill="#da806a"/>`).join('')}
         <circle class="map-company" cx="${s.worldX/WORLD_WIDTH*160}" cy="${s.worldY/WORLD_HEIGHT*110}" r="4" fill="#f4d18b" stroke="#fff6dc"/>
@@ -131,7 +131,10 @@ function renderWorldHud(): void {
     </div>
     <div class="world-companions" aria-label="Companions">${s.mercenaries.slice(0,4).map(m => `<button data-action="select-merc" data-merc="${m.id}" aria-label="View ${escapeHtml(m.name)}">${portrait(m.class)}<span>${escapeHtml(m.name)}</span><i class="health-track"><i style="width:${Math.max(0,m.health/m.maxHealth)*100}%"></i></i></button>`).join('')}</div><div class="quickbar mobile-nav" data-testid="mobile-nav">
       ${[['shield','Company','inventory'],['eye','Explore','explore'],['scroll','Contracts','quests'],['star','Knowledge','knowledge'],['camp','Camp','camp'],['save','Save','save']].map(([symbol,label,action])=>button(`${itemIcon(label)}<span class="nav-label">${label}</span>`, action, 'nav-btn')).join('')}
-    </div><div id="nearby-location"></div>`;
+    </div><div id="nearby-location"></div>
+    <div class="world-view-controls" aria-label="Map view"><button data-action="world-grid" aria-pressed="${scene?.worldGridVisible() ?? true}" title="Toggle tile grid">▦ <span>Grid</span></button><button data-action="world-zoom-out" aria-label="Zoom out">−</button><button data-action="world-zoom-in" aria-label="Zoom in">+</button></div>
+    <div class="world-dpad" role="group" aria-label="Movement controls">${(['up','left','right','down'] as const).map((dir,i)=>`<button class="direction-${dir}" data-world-direction="${dir}" aria-label="Move ${dir}">${['▲','◀','▶','▼'][i]}</button>`).join('')}<span aria-hidden="true">✥</span></div>
+    <div class="world-move-hint"><kbd>WASD</kbd> / <kbd>↑↓←→</kbd> Walk <i>·</i> Click a tile to travel</div>`;
   updateNearbyLocation();
 }
 
@@ -206,9 +209,7 @@ function showExplore(): void {
   const detail = loc.type === 'town' ? 'Recruitment · Forge · Market' : tomb ? `Ancient tomb · ${tomb.roomsExplored}/${tomb.totalRooms} rooms` : loc.id === 'iron-mine' ? 'Iron · Miner bonus · Locked chest' : loc.id === 'old-mill' ? 'Grain · Wood · Cook & Tinkerer bonuses' : loc.id === 'old-battlefield' ? 'Salvage · Scholar bonus · Locked chest' : 'Garrison battle · Supplies · Locked chest';
   const status = tomb?.completed || progress?.cleared ? 'Cleared · open to revisit' : progress?.searched ? 'Searched · open to revisit' : progress?.entered ? 'Visited' : s.discovered.includes(loc.id) ? 'Discovered' : 'Unvisited';
   modal.innerHTML = `<div class="panel wide exploration-panel atlas-screen" data-testid="explore-panel"><header><div><small>CHART YOUR NEXT JOURNEY</small><h2>Map of the Frontier</h2></div><button class="x" data-action="close" aria-label="Close">×</button></header><div class="atlas-layout"><div class="atlas-map" role="group" aria-label="Choose a destination">
-    <svg class="atlas-terrain" viewBox="0 0 640 440" preserveAspectRatio="none" aria-hidden="true"><path d="M0 0H640V440H0Z" fill="#b7a478"/><path d="M0 0H289L273 80 301 127 282 225 310 331 283 440H0Z" fill="#9a9d6b"/><path d="M285 0 273 80 301 127 282 225 310 331 283 440" fill="none" stroke="#748f8b" stroke-width="11"/><path d="M380 0 351 108 405 183 467 216 501 313 640 365V0Z" fill="#a49777"/><path d="M0 330 150 320 277 385 437 289 640 314V440H0Z" fill="#aeb1a0"/><path d="M124 164 208 124 302 152 430 236 540 344M208 124 250 206 284 274M302 152 410 130 488 156M430 236 470 352 574 274" fill="none" stroke="#776243" stroke-width="3" stroke-dasharray="5 4"/>
-    ${Array.from({length: 35}, (_,i) => { const x=28+(i*73)%590,y=30+(i*47)%365;return `<path d="M${x-6} ${y+9}l6-16 6 16zm-3 7l9-18 9 18z" fill="#5f704e" opacity=".45"/>`; }).join('')}
-    ${Array.from({length: 12}, (_,i) => {const x=370+(i*49)%210,y=28+(i*31)%160;return `<path d="M${x-13} ${y+16}l13-27 14 27z" fill="#746f5b" opacity=".55"/><path d="M${x-5} ${y}l5-11 6 11z" fill="#d6c7a4"/>`;}).join('')}
+    <svg class="atlas-terrain" viewBox="0 0 640 440" preserveAspectRatio="none" aria-hidden="true"><g shape-rendering="crispEdges">${worldMapOverview()}</g>
     <text x="63" y="270">GREENMARCH</text><text x="372" y="88">ASHEN HILLS</text><text x="392" y="406">FROSTMERE</text></svg><span class="map-compass" aria-hidden="true">N<br/>✧</span>
     ${LOCATIONS.map(l => `<button class="atlas-pin ${l.id === loc.id ? 'active' : ''} ${l.type}" style="left:${l.x/WORLD_WIDTH*100}%;top:${l.y/WORLD_HEIGHT*100}%" data-action="map-select" data-location="${l.id}" aria-label="Select ${l.name}" aria-pressed="${l.id === loc.id}"><span>${l.type === 'town' ? '⌂' : l.type === 'hostile' ? '⚑' : '◆'}</span><small>${l.name}</small></button>`).join('')}
     <span class="atlas-company" style="left:${s.worldX/WORLD_WIDTH*100}%;top:${s.worldY/WORLD_HEIGHT*100}%" title="Your company" aria-label="Your company">●</span><div class="atlas-key">⌂ Settlement <span>◆ Exploration</span> ⚑ Garrison</div></div>
@@ -302,7 +303,7 @@ function showMainMenu(): void {
 
 function showHelp(): void {
   modal.innerHTML = `<div class="panel help-panel"><header><div><span class="eyebrow">FIELD MANUAL</span><h2>Make every turn count</h2></div><button class="x" data-action="close" aria-label="Close help">×</button></header>
-    <div class="help-step"><b>01</b><div><h3>Explore the frontier</h3><p>Tap the ground or use WASD to travel. Tap any location, or choose one in Explore, to walk there and enter on arrival. The nearby Enter button or E opens a location again. Menus pause world travel and hostile patrols.</p></div></div>
+    <div class="help-step"><b>01</b><div><h3>Explore the frontier</h3><p>Walk one tile at a time with WASD, arrow keys, or the touch direction pad. Tap a clear tile to follow a path; trees, rocks, buildings and water block movement. Cross rivers at bridges. Tap a building, or choose one in Explore, to reach its marked entrance and enter on arrival. The nearby Enter button or E opens a location again. Menus pause world travel and hostile patrols.</p></div></div>
     <div class="help-step"><b>02</b><div><h3>Move, then act</h3><p>Select a mercenary from the field or roster. Blue cells are reachable; red cells contain enemies in range. Each unit gets one move and one action per round. Allies, enemies and obstacles block movement.</p></div></div>
     <div class="help-step"><b>03</b><div><h3>Spend and earn Valor</h3><p>Skills use shared Valor. Temporary points are spent first. Engagement earns a point when engaging an enemy; Victory on a kill; Support when ending beside an ally while unengaged. Each mercenary can trigger their chosen style once per round.</p></div></div>
     <div class="help-step"><b>04</b><div><h3>Keep the company ready</h3><p>Guard grants armor and ends a turn. Leaving an engagement provokes a hit. Camp restores health and Valor; it consumes food and wages every third rest. Convert food in your pack into provisions before resting.</p></div></div>
@@ -438,6 +439,7 @@ function showDefeat(): void {
 function exposeTestApi(): void {
   (window as any).__GAME_TEST_API__ = {
     getGameState: () => scene?.getSnapshot(),
+    worldSnapshot: () => scene?.testWorldSnapshot(),
     movePartyTo: (x: number, y: number) => scene?.testMovePartyTo(x,y),
     triggerEncounter: (id = 'bandit-1') => scene?.testTriggerEncounter(id),
     battleSnapshot: () => scene?.testBattleSnapshot(),
@@ -481,8 +483,45 @@ window.addEventListener('ironbound:ui', (ev: Event) => {
   if (d.type === 'defeat') showDefeat();
 });
 
+const heldMovementKeys = new Map<string, WorldDirection>();
+let directionPointer: number | null = null;
+const directionKeys: Record<string, WorldDirection> = { w:'up', arrowup:'up', a:'left', arrowleft:'left', s:'down', arrowdown:'down', d:'right', arrowright:'right' };
+function releaseWorldInput(): void {
+  heldMovementKeys.clear(); directionPointer = null;
+  document.querySelectorAll('[data-world-direction].pressed').forEach(el => el.classList.remove('pressed'));
+  scene?.pauseWorldTravel();
+}
+window.addEventListener('blur', releaseWorldInput);
+document.addEventListener('visibilitychange', () => { if (document.hidden) releaseWorldInput(); });
+document.addEventListener('pointerdown', (event) => {
+  const button = (event.target as Element).closest<HTMLButtonElement>('[data-world-direction]');
+  if (!button || modal.childElementCount || lastBattleHud || directionPointer !== null) return;
+  event.preventDefault(); directionPointer = event.pointerId;
+  button.setPointerCapture(event.pointerId); button.classList.add('pressed');
+  scene?.setWorldDirection(button.dataset.worldDirection as WorldDirection);
+});
+function releaseDirectionPointer(event: PointerEvent): void {
+  if (event.pointerId !== directionPointer) return;
+  directionPointer = null;
+  document.querySelectorAll('[data-world-direction].pressed').forEach(el => el.classList.remove('pressed'));
+  scene?.setWorldDirection(Array.from(heldMovementKeys.values()).at(-1) ?? null);
+}
+document.addEventListener('pointerup', releaseDirectionPointer);
+document.addEventListener('pointercancel', releaseDirectionPointer);
+document.addEventListener('lostpointercapture', releaseDirectionPointer);
+document.addEventListener('keyup', (e) => {
+  if (!heldMovementKeys.delete(e.key.toLowerCase())) return;
+  scene?.setWorldDirection(Array.from(heldMovementKeys.values()).at(-1) ?? null);
+});
+
 document.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLElement && e.target.closest('input, select, textarea, [contenteditable]')) return;
+  const movement = directionKeys[e.key.toLowerCase()];
+  if (movement && !modal.childElementCount && !lastBattleHud) {
+    e.preventDefault();
+    if (!e.repeat) { heldMovementKeys.set(e.key.toLowerCase(), movement); scene?.setWorldDirection(movement); }
+    return;
+  }
   if (e.key === 'Escape') {
     if (modal.querySelector('.panel:not(.encounter):not(.victory)')) { closeModal(); if (!game) showMainMenu(); }
     else if (!modal.childElementCount) scene?.cancelBattleSkill();
@@ -543,6 +582,9 @@ document.addEventListener('click', (e) => {
     saveGame();
     closeModal(); bootGame();
   }
+  else if (action === 'world-grid') scene?.toggleWorldGrid();
+  else if (action === 'world-zoom-in') scene?.zoomWorld(.15);
+  else if (action === 'world-zoom-out') scene?.zoomWorld(-.15);
   else if (action === 'inventory') showInventory();
   else if (action === 'select-merc') { selectedMercId = target.dataset.merc!; refreshPanel(showInventory, target); }
   else if (action === 'select-item') { selectedItemId = target.dataset.itemId!; refreshPanel(showInventory, target); }
@@ -687,6 +729,7 @@ const modalObserver = new MutationObserver(() => {
   hud.inert = !!panel;
   gameRoot.inert = !!panel;
   if (!panel) return;
+  releaseWorldInput();
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-modal', 'true');
   const heading = panel.querySelector('h1, h2');

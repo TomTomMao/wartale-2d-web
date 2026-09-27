@@ -4,7 +4,7 @@ A playable 2D tactical mercenary RPG prototype inspired by the **structure and g
 
 ## What is playable
 
-- Large scrolling overworld with three visually distinct regions
+- A scrolling, tile-based overworld with three distinct regions, pixel villages, forests, rivers and bridges
 - Eleven enterable and revisitable locations, with gathering, caches, garrison battles and tomb rooms
 - Moving hostile parties that wander/chase the player
 - World encounters with fight/flee choice
@@ -37,7 +37,7 @@ npm run test:e2e
 
 ## Controls
 
-World: WASD move, left click move, mouse wheel zoom, I inventory, Q contracts, R camp. Click any location marker to walk there and enter on arrival. Use **Explore** to choose a destination, or **E / Enter nearby** to revisit a location.
+World: **WASD / arrow keys** walk one tile at a time in four directions; hold to keep walking. **Click a clear tile** to follow a route around obstacles. Trees, rocks, buildings and water block movement; bridges cross the river. Click a building or choose a destination in **Explore** to walk to its marked doorway and enter. **E / Enter nearby** revisits a nearby location. Use the **Grid** button to toggle tile outlines and the **+ / −** buttons or mouse wheel to zoom. **I** opens Company, **Q** contracts and **R** camp. Menus and leaving the browser pause travel and clear movement input.
 
 Battle: select a mercenary from the field or roster; tap a blue tile to move and a highlighted enemy to attack. Skills spend shared Valor. Guard or Space/End Unit finishes the activation; N selects the next ready unit, and Escape cancels skill targeting. Guard and End Unit remain visible on narrow screens. The next ready mercenary is selected automatically.
 
@@ -51,6 +51,8 @@ Battle: select a mercenary from the field or roster; tap a blue tile to move and
 - `src/forging.ts` — equipment recipes and upgrades
 - `src/resources.ts` — shared costs and material supplies
 - `src/store.ts` — persistence
+- `src/worldMap.ts` — deterministic terrain, connected roads, four-neighbour pathfinding and legacy-position migration
+- `src/worldArt.ts` — native pixel tiles, buildings and four-direction walking sprites
 - `src/game.ts` — Phaser world and tactical battle
 - `src/main.ts` — UI and orchestration
 - `src/gameUi.css` — responsive game frames, character sheets, camp and atlas layouts
@@ -63,7 +65,7 @@ Battle: select a mercenary from the field or roster; tap a blue tile to move and
 
 The game supports touch-first play on modern mobile browsers.
 
-- Tap the world to move the company.
+- Tap a clear tile to route the company, or hold the four-direction pad to walk. Release the pad to stop at the next tile. Buildings have marked entrance tiles.
 - Use the fixed bottom navigation for Company, Explore, Contracts, Knowledge, Camp and Save.
 - Town, inventory, camp and knowledge screens use framed, scrollable game panels on mobile.
 - In battle, tap a blue unit, tap a valid location to move, then tap an enemy to attack.
@@ -87,7 +89,7 @@ The game supports touch-first play on modern mobile browsers.
 
 ### Verification
 
-The suite covers 106 unit tests and 23 Chromium browser scenarios, including real battle inputs through victory, contract rewards, saving and reloading. Mobile checks cover a 390×844 touch viewport and rotation to landscape. These checks are browser emulation, not physical iPhone/Safari testing.
+The suite covers 112 unit tests and 28 Chromium browser scenarios, including real battle inputs through victory, contract rewards, saving and reloading. Mobile checks cover a 390×844 touch viewport and rotation to landscape. These checks are browser emulation, not physical iPhone/Safari testing.
 
 See [CHANGELOG.md](CHANGELOG.md) for the bug fixes and intentional rule changes.
 
@@ -133,3 +135,13 @@ The interface uses original pixel scenery, brass-edged game panels and a parchme
 ![Company character sheet and pack](docs/screenshots/company.png)
 ![Interactive company camp](docs/screenshots/camp.png)
 ![Frontier atlas](docs/screenshots/atlas.png)
+
+
+## Tile overworld
+
+The frontier is an 80 × 55 tile map. The company walks in a trailing line with directional animation, and hostile patrols follow the same terrain rules. A visible route shows where a ground click will take the company. Travel costs are charged only for completed steps, with the existing road fatigue benefit preserved. Fleeing chooses reachable land; it cannot place the company in a river or building.
+
+Every location is connected to the road network and has a marked entrance. The minimap and atlas show the same terrain as the playable world. Loading an older save relocates only invalid positions to a nearby connected, walkable tile; existing equipment, professions, exploration and rewards remain intact.
+
+![Tile overworld and company](docs/screenshots/world.png)
+![Touch controls on the tile overworld](docs/screenshots/mobile-world.png)

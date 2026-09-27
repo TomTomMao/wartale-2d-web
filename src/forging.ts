@@ -1,4 +1,5 @@
 import { LOCATIONS } from './data';
+import { isNearLocation } from './locations';
 import { awardProfessionXp, bestProfessional, ensureCoreSystems, gainKnowledge } from './systems';
 import { missingResources, spendResources, type ResourceCost } from './resources';
 import type { GameState, Item, Mercenary } from './types';
@@ -22,7 +23,7 @@ export const FORGE_RECIPES: ForgeRecipe[] = [
 ];
 
 export function forgeStation(state: GameState): string | undefined {
-  const town = LOCATIONS.find(l => l.type === 'town' && Math.hypot(state.worldX - l.x, state.worldY - l.y) <= 170);
+  const town = LOCATIONS.find(l => l.type === 'town' && isNearLocation(state, l.id));
   return town ? `${town.name} forge` : state.campFacilities.includes('Workshop') ? 'Camp Workshop' : undefined;
 }
 

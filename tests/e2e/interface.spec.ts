@@ -16,7 +16,7 @@ async function loadCompany(page: Page) {
   await page.reload();
   await page.getByTestId('continue-button').click();
   await page.waitForFunction(() => Boolean((window as any).__GAME_TEST_API__));
-  return s;
+  return await page.evaluate(() => (window as any).__GAME_TEST_API__.getGameState()) as typeof s;
 }
 const close = (page: Page) => page.locator('#modal-root header [data-action="close"]').click();
 

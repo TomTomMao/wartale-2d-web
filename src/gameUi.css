@@ -82,3 +82,23 @@
 @media(max-width:370px){.hud-title strong{max-width:108px;font-size:14px}.hud-title span{max-width:108px;font-size:7px}.resource-strip{gap:7px}.resource-chip .pixel-icon{width:17px;height:17px}.resource-chip em{font-size:12px}.resource-chip small{font-size:6px}.resource-chip{gap:1px}.company-mark{width:26px}.panel,.panel.wide{padding-left:10px;padding-right:10px}.companion-token{flex-basis:92px}.companion-token .portrait{width:33px}.atlas-map{height:352px}.atlas-pin small{font-size:7px;max-width:65px}.destination-detail{grid-template-columns:85px 1fr}.inventory-slots{gap:4px}.inventory-slot .pixel-icon{width:33px;height:33px}.supply-recipe>.pixel-icon{display:none}}
 @media(orientation:landscape) and (max-height:520px){.topbar{top:6px;min-height:44px;height:46px;padding:4px 10px}.company-mark{height:32px;width:30px}.hud-title strong{font-size:15px}.world-objective{top:64px;width:225px}.world-map,.world-companions{display:none}.quickbar.mobile-nav{bottom:6px;padding:3px}.quickbar .btn.nav-btn{min-height:45px;min-width:66px;gap:0}.nav-btn .pixel-icon{width:23px;height:23px}.quickbar .nav-label{font-size:8px}#nearby-location{bottom:70px}.battle-command{bottom:5px;padding:6px 9px}.battle-roster{display:none}.battlebar{height:46px}.battle-actions .action-btn .pixel-icon{width:23px;height:23px}.battle-command .turn-actions .action-btn{min-height:45px}.battle-actions.expanded-actions .action-btn .pixel-icon{width:17px;height:17px}.panel,.panel.wide{max-height:calc(100dvh - 24px)}.title-menu .menu-copy{top:48%;left:9%;width:310px}.title-menu .menu-copy h1{font-size:38px;margin:9px 0}.title-menu .title-sigil{display:none}.title-menu .menu-copy .subtitle{margin-bottom:18px}.title-menu .menu-copy .btn{min-height:40px;width:245px}.title-menu .menu-copy .eyebrow{font-size:7px}.title-menu .title-help{padding:7px}.title-party{left:65%;bottom:9%}.title-party .portrait{width:76px;height:105px}.title-party .portrait:nth-child(2){width:91px;height:132px}.title-footer{bottom:12px;font-size:6px}.camp-scene{height:220px}}
 @media(prefers-reduced-motion:reduce){.camp-glow{animation:none}}
+
+/* Field controls sit around the map, leaving the company and route visible. */
+.world-view-controls{position:absolute;right:17px;bottom:25px;display:flex;gap:4px;pointer-events:auto}
+.world-view-controls button{height:36px;min-width:36px;padding:0 9px;border:1px solid #9a8255;background:#23382de8;color:#ead8ac;font:13px monospace;cursor:pointer;box-shadow:inset 0 0 0 2px #16281f}
+.world-view-controls button[aria-pressed=false]{color:#9da68e;border-color:#66775a}
+.world-move-hint{position:absolute;left:18px;bottom:112px;font:10px monospace;color:#f0e6c4;text-shadow:1px 1px #263d29,0 1px 5px #102818;background:#263c30c9;padding:9px 11px}
+.world-move-hint kbd{font:inherit;color:#ffe5a2}.world-move-hint i{font-style:normal;margin:0 6px;color:#a9b296}
+.world-dpad{display:none;position:absolute;left:12px;bottom:94px;width:144px;height:144px;pointer-events:none;grid-template-columns:repeat(3,48px);grid-template-rows:repeat(3,48px);filter:drop-shadow(0 3px 0 #13281f);user-select:none;-webkit-user-select:none}
+.world-dpad button{width:48px;height:48px;background:#314939ec;color:#eddfb6;border:1px solid #a99d71;box-shadow:inset 0 0 0 3px #20392de8;font-size:17px;pointer-events:auto;touch-action:none;cursor:pointer;padding:0;border-radius:3px}
+.world-dpad button.pressed{background:#d8c38d;color:#284232;box-shadow:inset 0 0 0 3px #a29f70}
+.direction-up{grid-column:2;grid-row:1}.direction-left{grid-column:1;grid-row:2}.direction-right{grid-column:3;grid-row:2}.direction-down{grid-column:2;grid-row:3}
+.world-dpad>span{grid-column:2;grid-row:2;display:grid;place-items:center;background:#294533cf;font-size:25px;color:#a59f77}
+@media(pointer:coarse),(max-width:700px){
+  .world-dpad{display:grid}.world-move-hint{display:none}
+  .world-view-controls{top:79px;right:9px;bottom:auto;gap:3px}.world-view-controls button{min-width:40px;height:40px;padding:0 7px}.world-view-controls button span{display:none}
+  #nearby-location{left:auto;right:9px;bottom:105px;transform:none;width:calc(100vw - 177px);max-width:280px}
+  .nearby-btn{min-width:0;width:100%;padding:10px;gap:7px}.nearby-btn>span{white-space:normal}.nearby-btn small{font-size:8px}.nearby-btn>.ui-icon:last-child{display:none}
+}
+@media(max-width:380px){.world-objective{width:201px}.world-view-controls button{min-width:35px}}
+@media(orientation:landscape) and (max-height:520px){.world-dpad{bottom:70px;left:10px}.world-view-controls{top:64px;bottom:auto;right:10px}.world-move-hint{display:none}#nearby-location{bottom:85px}}
