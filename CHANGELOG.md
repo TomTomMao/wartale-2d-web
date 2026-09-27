@@ -1,3 +1,16 @@
+# Tile overworld
+
+- Replaced free movement over a painted background with an 80 × 55 tile overworld: grass, paths, town squares, woods, rocks, rivers, bridges and blocked building footprints.
+- Added four-direction, whole-tile travel with keyboard, arrow keys and a touch direction pad; short taps are buffered between frames and held input stops cleanly on release, menus, blur and visibility changes.
+- Added terrain-aware click routing and a visible route. All eleven locations have reachable, marked entrances and still support automatic entry and repeat visits.
+- Added original native pixel tiles, village buildings and four-direction actor frames, a following company line, closer camera, zoom buttons and a grid toggle. The atlas and minimap now use the actual world terrain.
+- Made I/Q/R world menu shortcuts event-based so quick taps reliably open Company, Contracts and Camp and stop travel.
+- Corrected world travel timing on low-FPS devices: use bounded elapsed frame time instead of Phaser’s smoothed startup delta. Browser checks read animation state atomically and keep full terrain snapshots optional.
+- Patrols use walkable tile paths. Encounters require tile adjacency, and fleeing chooses a reachable destination. Fatigue is charged only for completed steps.
+- Legacy saves snap to connected walkable tiles while preserving company progression. Region boundaries now agree with the named locations, including the Ruined Keep and Old Battlefield.
+- Added six map rule tests and five browser scenarios covering connected entrances, obstacles, bridges, quick keyboard taps, touch release, paused travel, actual patrol encounters, fleeing and old saves. Existing exploration, profession, forge and battle flows remain covered.
+- Validation: 112 unit tests, 28 Chromium browser scenarios, TypeScript/Vite production build and desktop/mobile screenshot review.
+
 # Game interface redesign
 
 - Replaced the split landing page with a full-screen original pixel landscape, company silhouettes and a game title menu.

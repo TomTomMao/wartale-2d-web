@@ -1,4 +1,5 @@
 import { LOCATIONS } from './data';
+import { locationCell, WORLD_TILE_SIZE, worldPoint } from './worldMap';
 import { awardProfessionXp, bestProfessional, commitCrime, ensureCoreSystems, gainKnowledge } from './systems';
 import { missingResources, spendResources, type ResourceCost } from './resources';
 import type { GameState, LocationProgress, WorldEnemy } from './types';
@@ -48,8 +49,10 @@ export function locationProgress(state: GameState, id: string): LocationProgress
 }
 
 export function isNearLocation(state: GameState, id: string): boolean {
-  const loc = LOCATIONS.find(l => l.id === id);
-  return !!loc && Math.hypot(state.worldX - loc.x, state.worldY - loc.y) <= 170;
+  const cell = locationCell(id);
+  if (!cell) return false;
+  const p = worldPoint(cell);
+  return Math.hypot(state.worldX - p.x, state.worldY - p.y) <= WORLD_TILE_SIZE * 1.15;
 }
 
 export function nearestLocation(state: GameState): MapLocation | undefined {

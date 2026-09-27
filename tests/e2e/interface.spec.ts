@@ -16,11 +16,14 @@ async function loadCompany(page: Page) {
   await page.reload();
   await page.getByTestId('continue-button').click();
   await page.waitForFunction(() => Boolean((window as any).__GAME_TEST_API__));
-  return s;
+  return await page.evaluate(() => (window as any).__GAME_TEST_API__.getGameState()) as typeof s;
 }
 const close = (page: Page) => page.locator('#modal-root header [data-action="close"]').click();
 
 test('character slots equip the chosen companion and keep keyboard selection usable', async ({ page }) => {
+  // Equipping, two viewport changes, crafting, upgrading and screenshots share this budget.
+  // Keep the per-assertion timeout unchanged while allowing software-rendered CI to finish.
+  test.setTimeout(60_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   const s = await loadCompany(page);
   await page.getByRole('button', { name: 'Company', exact: true }).click();

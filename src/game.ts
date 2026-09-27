@@ -6,10 +6,7 @@ import { awardPathXp, inflictInjury, travelStep } from './systems';
 import { clearLocationGarrison, enterLocation, isNearLocation, locationDefender, nearestLocation } from './locations';
 import type { BattleUnit, MercClass, WorldEnemy } from './types';
 import {
-  createPixelLocation,
-  drawPixelRock,
-  drawPixelTerrain,
-  drawPixelTree
+  drawPixelRock, drawPixelTree, drawPixelTerrain,
 } from './pixelArt';
 import { classToKind, createActor, playActor, setWalk, type ActorKind } from './animatedSprites';
 import { battleSkillsFor, type BattleSkill } from './battleSkills';
@@ -18,14 +15,31 @@ import {
   neighbours, reachableCells, shortestPath, worldToCell, type GridCell, type GridLayout
 } from './battleGrid';
 
+import { getWorldMap, WORLD_REGIONS, WORLD_TILE_SIZE, directedCell, directionBetween, fleeCell, locationCell, roadTile, safeWorldCell, tileAt, walkable, worldCell, worldPath, worldPoint, type WorldDirection } from './worldMap';
+import { createWorldActor, createWorldBuilding, drawWorldTiles, poseWorldActor } from './worldArt';
+
 const WORLD_EVENT = 'ironbound:ui';
 type Mode = 'world' | 'battle';
+type WorldStep = { from: GridCell; to: GridCell; elapsed: number; duration: number };
+
 
 export class GameScene extends Phaser.Scene {
   private mode: Mode = 'world';
   private party?: Phaser.GameObjects.Container;
-  private keys?: Record<string, Phaser.Input.Keyboard.Key>;
-  private moveTarget?: Phaser.Math.Vector2;
+  private world = getWorldMap();
+  private worldLayer?: Phaser.Tilemaps.TilemapLayer;
+  private worldGrid?: Phaser.GameObjects.Graphics;
+  private routeArt?: Phaser.GameObjects.Graphics;
+  private showWorldGrid = true;
+  private worldRoute: GridCell[] = [];
+  private worldStep?: WorldStep;
+  private heldDirection?: WorldDirection;
+  private queuedDirection?: WorldDirection;
+  private facing: WorldDirection = 'down';
+  private trail: GridCell[] = [];
+  private followers: Phaser.GameObjects.Sprite[] = [];
+  private enemySteps = new Map<string, WorldStep>();
+  private patrolTurn = 0;
   private destinationLocation?: string;
   private enemySprites = new Map<string, Phaser.GameObjects.Container>();
   private battleUnits: BattleUnit[] = [];
@@ -74,89 +88,105 @@ export class GameScene extends Phaser.Scene {
     this.mode = 'world';
     this.selectedUnitId = undefined;
     this.selectedSkillId = undefined;
-    this.moveTarget = undefined;
+    this.worldRoute = [];
+    this.worldStep = undefined;
+    this.heldDirection = this.queuedDirection = undefined;
     this.destinationLocation = undefined;
     this.input.removeAllListeners('pointerdown');
     this.input.removeAllListeners('pointermove');
     this.input.removeAllListeners('wheel');
+    this.worldLayer?.tilemap.destroy();
+    this.worldLayer = undefined;
     this.children.removeAll(true);
     this.enemySprites.clear();
+    this.enemySteps.clear();
     this.battleSprites.clear();
     this.clearGridHighlights();
-    this.movementRange?.destroy();
     this.movementRange = undefined;
-    this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT).setZoom(this.defaultWorldZoom());
     this.physics.world.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-    this.cameras.main.setZoom(1);
-
-    drawPixelTerrain(this, WORLD_WIDTH, WORLD_HEIGHT, 'world').setDepth(-20);
-
-    // Chunky pixel-road and river overlays.
-    const roads = this.add.graphics().setDepth(-10);
-    roads.lineStyle(22, 0xa98757, 1);
-    roads.beginPath();
-    roads.moveTo(380, 950); roads.lineTo(650, 820); roads.lineTo(1050, 760); roads.lineTo(1450, 900); roads.lineTo(2100, 1180); roads.lineTo(2700, 1700); roads.strokePath();
-    roads.lineStyle(10, 0xc0a36e, 1);
-    roads.beginPath();
-    roads.moveTo(380, 950); roads.lineTo(650, 820); roads.lineTo(1050, 760); roads.lineTo(1450, 900); roads.lineTo(2100, 1180); roads.lineTo(2700, 1700); roads.strokePath();
-
-    const river = this.add.graphics().setDepth(-9);
-    river.lineStyle(18, 0x3f6f91, 1);
-    river.beginPath(); river.moveTo(1100, 0); river.lineTo(980, 500); river.lineTo(1170, 900); river.lineTo(1030, 1500); river.lineTo(1220, 2200); river.strokePath();
-
-    for (let i = 0; i < 34; i++) {
-      const x = 180 + (i * 173) % (WORLD_WIDTH - 300);
-      const y = 140 + (i * 277) % (WORLD_HEIGHT - 260);
-      if (i % 3 === 0) drawPixelRock(this, x, y, 3).setDepth(-5);
-      else drawPixelTree(this, x, y, 3).setDepth(-5);
-    }
-
+    this.worldLayer = drawWorldTiles(this, this.world);
+    this.worldGrid = this.add.graphics().setDepth(-19).setVisible(this.showWorldGrid);
+    this.worldGrid.lineStyle(1, 0x264933, .12);
+    for (let x = 0; x <= WORLD_WIDTH; x += WORLD_TILE_SIZE) this.worldGrid.lineBetween(x, 0, x, WORLD_HEIGHT);
+    for (let y = 0; y <= WORLD_HEIGHT; y += WORLD_TILE_SIZE) this.worldGrid.lineBetween(0, y, WORLD_WIDTH, y);
+    this.routeArt = this.add.graphics().setDepth(-5);
+    for (const building of this.world.buildings) createWorldBuilding(this, building);
     for (const loc of LOCATIONS) this.createLocation(loc);
-    const state = getState();
-    this.party = this.createParty(state.worldX, state.worldY);
-    this.cameras.main.startFollow(this.party, true, 0.08, 0.08);
+    const state = getState(), start = safeWorldCell(this.world, state.worldX, state.worldY), point = worldPoint(start);
+    state.worldX = point.x; state.worldY = point.y;
+    state.currentRegion = WORLD_REGIONS[tileAt(this.world, start)!.region];
+    this.trail = [start, start, start];
+    this.followers = state.mercenaries.slice(1, 3).map(m => createWorldActor(this, classToKind(m.class), point.x, point.y).setVisible(false));
+    this.party = this.add.container(point.x, point.y, [createWorldActor(this, classToKind(state.mercenaries[0]?.class ?? 'Swordsman'), 0, 0)]).setDepth(point.y);
+    this.cameras.main.startFollow(this.party, true, .2, .2);
+    this.cameras.main.centerOn(point.x, point.y);
     this.createEnemies();
-
-    this.keys = this.input.keyboard?.addKeys('W,A,S,D,I,C,Q,R,M,ESC,E') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.checkDiscoveries();
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (this.mode !== 'world' || this.uiOpen() || this.encounterEnemy) return;
-      const world = p.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
-      this.destinationLocation = undefined;
-      this.moveTarget = new Phaser.Math.Vector2(world.x, world.y);
+      const pos = p.positionToCamera(this.cameras.main) as Phaser.Math.Vector2;
+      this.routeTo(worldCell(pos.x, pos.y));
     });
     this.input.on('wheel', (_p: Phaser.Input.Pointer, _objs: unknown[], _dx: number, dy: number) => {
       if (this.mode !== 'world' || this.uiOpen() || this.encounterEnemy) return;
-      this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom - dy * 0.001, 0.65, 1.45));
+      this.zoomWorld(-dy * .001);
     });
     this.emit({ type: 'world' });
   }
 
-  private createParty(x: number, y: number): Phaser.GameObjects.Container {
-    const root = this.add.container(x, y).setDepth(30).setSize(92, 72);
-    const sword = createActor(this, 'swordsman', -28, 8, 1.0).setName('party-swordsman');
-    const ranger = createActor(this, 'ranger', 6, -8, 1.0).setName('party-ranger');
-    const warrior = createActor(this, 'warrior', 30, 10, 1.0).setName('party-warrior');
-    const banner = this.add.graphics();
-    banner.fillStyle(0x3b2a1d).fillRect(-2,-50,4,46);
-    banner.fillStyle(0xc69d46).fillRect(2,-48,22,13);
-    banner.fillStyle(0x8d3030).fillRect(2,-35,15,6);
-    root.add([sword,ranger,warrior,banner]);
-    return root;
+  private defaultWorldZoom(): number { return this.scale.width < 700 ? 1.25 : this.scale.height < 520 ? 1.2 : 1.6; }
+  zoomWorld(amount: number): void {
+    if (this.mode === 'world') this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom + amount, .9, 2));
   }
+  toggleWorldGrid(): void { this.showWorldGrid = !this.showWorldGrid; this.worldGrid?.setVisible(this.showWorldGrid); }
+  worldGridVisible(): boolean { return this.showWorldGrid; }
 
   private createLocation(loc: typeof LOCATIONS[number]): void {
-    const art = createPixelLocation(this, loc.type, loc.id, 0, 0);
-    art.setPosition(-24, -28);
-    const label = this.add.text(0, 32, loc.name, {
-      fontFamily: 'monospace', fontSize: '15px', color: '#fff0c4',
-      backgroundColor: '#1d1914dd', padding: { x: 6, y: 3 }
-    }).setOrigin(0.5);
-    const marker = this.add.container(loc.x, loc.y, [art, label]).setDepth(10);
-    marker.setSize(150, 116).setInteractive({ useHandCursor: true }).on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, ev: Phaser.Types.Input.EventData) => {
-      ev.stopPropagation();
-      if (this.uiOpen() || this.encounterEnemy) return;
-      this.travelToLocation(loc.id);
+    const cell = locationCell(loc.id)!, point = worldPoint(cell);
+    const door = this.add.graphics().setDepth(-4);
+    door.lineStyle(2, 0xffecad, .9).strokeRect(point.x - 15, point.y - 15, 30, 30);
+    door.fillStyle(0xffecad, .9).fillTriangle(point.x - 5, point.y + 4, point.x + 5, point.y + 4, point.x, point.y - 2);
+    const label = this.add.text(point.x, point.y - 132, loc.name, {
+      fontFamily: 'monospace', fontSize: '10px', color: '#fff0c4',
+      backgroundColor: '#223d30dd', padding: { x: 5, y: 3 }
+    }).setOrigin(.5).setDepth(5000);
+    const building = this.world.buildings.find(b => b.id === loc.id)!;
+    const zone = this.add.zone(building.col * WORLD_TILE_SIZE, building.row * WORLD_TILE_SIZE, building.width * WORLD_TILE_SIZE, (building.height + 1) * WORLD_TILE_SIZE).setOrigin(0).setInteractive({ useHandCursor: true });
+    zone.on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, ev: Phaser.Types.Input.EventData) => {
+      ev.stopPropagation(); this.travelToLocation(loc.id);
     });
+    label.setInteractive({ useHandCursor: true }).on('pointerdown', (_p: Phaser.Input.Pointer, _x: number, _y: number, ev: Phaser.Types.Input.EventData) => {
+      ev.stopPropagation(); this.travelToLocation(loc.id);
+    });
+  }
+
+  private routeTo(goal: GridCell, location?: string): boolean {
+    const state = getState(), start = this.worldStep?.to ?? worldCell(state.worldX, state.worldY);
+    if (!walkable(this.world, goal)) {
+      this.emit({ type: 'toast', message: 'That tile is blocked. Follow the paths and bridges.' }); return false;
+    }
+    const route = worldPath(this.world, start, goal);
+    if (!route.length && manhattan(start, goal)) {
+      this.emit({ type: 'toast', message: 'No clear path to that tile.' }); return false;
+    }
+    this.heldDirection = this.queuedDirection = undefined;
+    this.destinationLocation = location;
+    this.worldRoute = route;
+    this.drawWorldRoute();
+    if (!route.length && !this.worldStep) {
+      const entrance = tileAt(this.world, goal)?.entrance;
+      if (entrance) this.enterNearbyLocation(entrance);
+    }
+    return true;
+  }
+
+  private drawWorldRoute(): void {
+    this.routeArt?.clear();
+    this.routeArt?.fillStyle(0xfff0b7, .65);
+    for (const cell of this.worldRoute) { const p = worldPoint(cell); this.routeArt?.fillCircle(p.x, p.y, 3); }
+    const goal = this.worldRoute.at(-1);
+    if (goal) { const p = worldPoint(goal); this.routeArt?.lineStyle(2, 0xfff0b7, .9).strokeRect(p.x - 17, p.y - 17, 34, 34); }
   }
 
   travelToLocation(id: string): void {
@@ -164,136 +194,138 @@ export class GameScene extends Phaser.Scene {
     const loc = LOCATIONS.find(l => l.id === id);
     if (!loc) return;
     if (isNearLocation(getState(), id)) { this.enterNearbyLocation(id); return; }
-    this.destinationLocation = id;
-    this.moveTarget = new Phaser.Math.Vector2(loc.x, loc.y);
-    this.emit({ type: 'toast', message: `Travelling to ${loc.name}. Your company will enter on arrival.` });
+    if (this.routeTo(locationCell(id)!, id)) this.emit({ type: 'toast', message: `Following the path to ${loc.name}. Entering on arrival.` });
   }
 
   enterNearbyLocation(id?: string): void {
     if (this.mode !== 'world' || this.encounterEnemy || this.uiOpen()) return;
     const loc = id ? LOCATIONS.find(l => l.id === id) : nearestLocation(getState());
     if (!loc || !enterLocation(getState(), loc.id)) return;
-    this.moveTarget = undefined;
-    this.destinationLocation = undefined;
+    this.pauseWorldTravel();
     saveGame();
     if (loc.type === 'town') this.emit({ type: 'town', townId: loc.id, townName: loc.name });
     else if (loc.id.includes('tomb')) this.emit({ type: 'tomb', tombId: loc.id, tombName: loc.name });
     else this.emit({ type: 'location', locationId: loc.id });
   }
 
+  // Keyboard and touch events queue even a very short tap between render frames.
+  setWorldDirection(direction: WorldDirection | null): void {
+    if (this.mode !== 'world' || this.uiOpen() || this.encounterEnemy) return;
+    this.heldDirection = direction ?? undefined;
+    if (direction) {
+      this.queuedDirection = direction;
+      this.worldRoute = []; this.destinationLocation = undefined; this.drawWorldRoute();
+    }
+  }
+
+  openWorldMenu(type: 'inventory' | 'quests' | 'camp'): void {
+    if (this.mode !== 'world' || this.uiOpen() || this.encounterEnemy) return;
+    this.pauseWorldTravel();
+    this.emit({ type });
+  }
+
+  pauseWorldTravel(): void {
+    if (this.mode !== 'world') return;
+    this.worldRoute = []; this.worldStep = undefined; this.destinationLocation = undefined;
+    this.heldDirection = this.queuedDirection = undefined;
+    this.drawWorldRoute();
+    const state = getState(), cell = worldCell(state.worldX, state.worldY);
+    this.paintParty(cell, cell, 0, false);
+    this.enemySteps.clear();
+    for (const e of state.enemies) {
+      const root = this.enemySprites.get(e.id); root?.setPosition(e.x, e.y).setDepth(e.y);
+      const actor = root?.getByName('actor');
+      if (actor instanceof Phaser.GameObjects.Sprite) poseWorldActor(actor, actor.getData('worldDirection'), false);
+    }
+  }
+
+  private paintParty(from: GridCell, to: GridCell, progress: number, moving: boolean): void {
+    const a = worldPoint(from), b = worldPoint(to), x = Phaser.Math.Linear(a.x, b.x, progress), y = Phaser.Math.Linear(a.y, b.y, progress);
+    this.party?.setPosition(x, y).setDepth(y);
+    const actor = this.party?.list[0];
+    if (actor instanceof Phaser.GameObjects.Sprite) poseWorldActor(actor, this.facing, moving, this.time.now);
+    this.followers.forEach((sprite, i) => {
+      const start = this.trail[i + 1] ?? from, end = moving ? this.trail[i] ?? from : start;
+      const p = worldPoint(start), q = worldPoint(end);
+      const sx = Phaser.Math.Linear(p.x, q.x, progress), sy = Phaser.Math.Linear(p.y, q.y, progress);
+      sprite.setPosition(sx, sy).setDepth(sy - .1).setVisible(manhattan(start, from) > 0 || manhattan(end, to) > 0);
+      poseWorldActor(sprite, moving ? directionBetween(start, end) : sprite.getData('worldDirection'), moving && manhattan(start, end) > 0, this.time.now);
+    });
+  }
+
   private createEnemies(): void {
     for (const e of getState().enemies.filter(e => e.alive)) {
+      Object.assign(e, worldPoint(safeWorldCell(this.world, e.x, e.y)));
       const kind: ActorKind = e.kind === 'wolf' ? 'wolf' : e.kind === 'raider' ? 'raider' : 'bandit';
-      const actor = createActor(this, kind, 0, 0, 1.12).setName('actor');
-      const badge = e.strength > 1
-        ? this.add.text(0,-34,'★'.repeat(Math.min(3,e.strength)),{fontFamily:'monospace',fontSize:'10px',color:'#f4c65d'}).setOrigin(.5)
-        : undefined;
-      const parts: Phaser.GameObjects.GameObject[] = [actor];
-      if (badge) parts.push(badge);
-      const container = this.add.container(e.x,e.y,parts).setDepth(20).setSize(58,64);
-      this.enemySprites.set(e.id, container);
+      const actor = createWorldActor(this, kind, 0, 0).setName('actor');
+      const badge = this.add.text(0, -41, e.strength > 1 ? '★'.repeat(Math.min(3,e.strength)) : '!', { fontFamily:'monospace', fontSize:'10px', color:'#ffe2a1', backgroundColor:'#713e36', padding:{x:3,y:1} }).setOrigin(.5);
+      this.enemySprites.set(e.id, this.add.container(e.x, e.y, [actor, badge]).setDepth(e.y));
     }
   }
 
   update(_time: number, delta: number): void {
-    if (this.mode !== 'world' || !this.party || !this.keys) return;
-    if (this.uiOpen() || this.encounterEnemy) {
-      this.moveTarget = undefined;
-      this.destinationLocation = undefined;
-      for (const child of this.party.list) if (child instanceof Phaser.GameObjects.Sprite) setWalk(child, false);
-      return;
-    }
-    delta = Math.min(delta, 80); // Returning from a background tab must not teleport the company.
+    if (this.mode !== 'world' || !this.party) return;
+    if (this.uiOpen() || this.encounterEnemy) { this.pauseWorldTravel(); return; }
+    // Phaser smooths/caps early frames to 60 Hz, which slows travel on low-FPS devices.
+    // Use elapsed frame time for the world, while bounding any background-tab gap.
+    delta = Math.min(this.game.loop.rawDelta || delta, 80);
     this.hudElapsed += delta;
     if (this.hudElapsed >= 500) { this.hudElapsed = 0; this.emit({ type: 'worldHud' }); }
     const state = getState();
-    const speed = 180;
-    let dx = 0, dy = 0;
-    if (this.keys.W.isDown) dy -= 1;
-    if (this.keys.S.isDown) dy += 1;
-    if (this.keys.A.isDown) dx -= 1;
-    if (this.keys.D.isDown) dx += 1;
-    let partyMoving = false;
-    if (dx || dy) {
-      this.destinationLocation = undefined;
-      partyMoving = true;
-      const len = Math.hypot(dx, dy);
-      const step = speed * delta / 1000;
-      state.worldX += dx / len * step;
-      state.worldY += dy / len * step;
-      travelStep(state, step, this.isNearRoad(state.worldX, state.worldY));
-      this.moveTarget = undefined;
-    } else if (this.moveTarget) {
-      partyMoving = true;
-      const vx = this.moveTarget.x - state.worldX;
-      const vy = this.moveTarget.y - state.worldY;
-      const d = Math.hypot(vx, vy);
-      if (d < 5) this.moveTarget = undefined;
-      else {
-        const step = Math.min(d, speed * delta / 1000);
-        state.worldX += vx / d * step;
-        state.worldY += vy / d * step;
-        travelStep(state, step, this.isNearRoad(state.worldX, state.worldY));
+    if (!this.worldStep) {
+      const from = worldCell(state.worldX, state.worldY), direction = this.queuedDirection ?? this.heldDirection;
+      this.queuedDirection = undefined;
+      const to = direction ? directedCell(from, direction) : this.worldRoute.shift();
+      if (to) {
+        this.facing = directionBetween(from, to);
+        if (walkable(this.world, to) && manhattan(from, to) === 1) this.worldStep = { from, to, elapsed: 0, duration: 180 };
+        this.drawWorldRoute();
       }
     }
-    state.worldX = Phaser.Math.Clamp(state.worldX, 30, WORLD_WIDTH - 30);
-    state.worldY = Phaser.Math.Clamp(state.worldY, 30, WORLD_HEIGHT - 30);
-    state.currentRegion = state.worldX < 1700 ? 'Greenmarch' : state.worldX < 2350 ? 'Ashen Hills' : 'Frostmere';
-    this.party.setPosition(state.worldX, state.worldY);
-    for (const child of this.party.list) {
-      if (child instanceof Phaser.GameObjects.Sprite) setWalk(child, partyMoving);
-    }
-    if (this.destinationLocation && isNearLocation(state, this.destinationLocation)) {
-      this.enterNearbyLocation(this.destinationLocation);
-      return;
-    }
+    const step = this.worldStep;
+    if (step) {
+      step.elapsed += delta;
+      const t = Math.min(1, step.elapsed / step.duration);
+      this.paintParty(step.from, step.to, t, true);
+      if (t === 1) {
+        const p = worldPoint(step.to); state.worldX = p.x; state.worldY = p.y;
+        travelStep(state, WORLD_TILE_SIZE, roadTile(this.world, step.to));
+        state.currentRegion = WORLD_REGIONS[tileAt(this.world, step.to)!.region];
+        this.trail.unshift(step.to); this.trail.length = 3; this.worldStep = undefined;
+        const entrance = tileAt(this.world, step.to)?.entrance;
+        if (entrance && !this.worldRoute.length && (!this.destinationLocation || this.destinationLocation === entrance)) {
+          this.enterNearbyLocation(entrance); return;
+        }
+        if (!this.worldRoute.length) this.destinationLocation = undefined;
+      }
+    } else { const cell = worldCell(state.worldX, state.worldY); this.paintParty(cell, cell, 0, false); }
     this.updateEnemies(delta);
     this.checkDiscoveries();
     this.checkEncounter();
     if (this.encounterEnemy) return;
-    if (Phaser.Input.Keyboard.JustDown(this.keys.I)) this.emit({ type: 'inventory' });
-    if (Phaser.Input.Keyboard.JustDown(this.keys.Q)) this.emit({ type: 'quests' });
-    if (Phaser.Input.Keyboard.JustDown(this.keys.R)) this.emit({ type: 'camp' });
-  }
-
-  private isNearRoad(x: number, y: number): boolean {
-    const points = [
-      [380,950],[650,820],[1050,760],[1450,900],[2100,1180],[2700,1700]
-    ] as const;
-    for (let i=0;i<points.length-1;i++) {
-      const [x1,y1]=points[i], [x2,y2]=points[i+1];
-      const vx=x2-x1, vy=y2-y1;
-      const wx=x-x1, wy=y-y1;
-      const len2=vx*vx+vy*vy;
-      const t=Math.max(0,Math.min(1,(wx*vx+wy*vy)/len2));
-      const px=x1+t*vx, py=y1+t*vy;
-      if (Math.hypot(x-px,y-py) < 55) return true;
-    }
-    return false;
   }
 
   private updateEnemies(delta: number): void {
-    const state = getState();
+    const state = getState(), player = worldCell(state.worldX, state.worldY);
     for (const enemy of state.enemies) {
-      if (!enemy.alive) continue;
       const sprite = this.enemySprites.get(enemy.id);
-      if (!sprite) continue;
-      const dToPlayer = Phaser.Math.Distance.Between(enemy.x, enemy.y, state.worldX, state.worldY);
-      if (dToPlayer < 300 && enemy.kind !== 'wolf') {
-        const ang = Phaser.Math.Angle.Between(enemy.x, enemy.y, state.worldX, state.worldY);
-        enemy.vx = Math.cos(ang) * (26 + enemy.strength * 4);
-        enemy.vy = Math.sin(ang) * (26 + enemy.strength * 4);
+      if (!enemy.alive || !sprite) continue;
+      let step = this.enemySteps.get(enemy.id);
+      if (!step) {
+        const from = worldCell(enemy.x, enemy.y);
+        const chase = manhattan(from, player) < 8 && enemy.kind !== 'wolf';
+        const options = neighbours(this.world, from).filter(c => walkable(this.world, c));
+        const to = chase ? worldPath(this.world, from, player)[0] : options[(this.patrolTurn++ + enemy.id.length) % options.length];
+        if (!to) continue;
+        step = { from, to, elapsed: 0, duration: 1000 - Math.min(enemy.strength, 3) * 80 };
+        this.enemySteps.set(enemy.id, step);
       }
-      enemy.x += enemy.vx * delta / 1000;
-      enemy.y += enemy.vy * delta / 1000;
-      if (enemy.x < 300 || enemy.x > WORLD_WIDTH - 200) enemy.vx *= -1;
-      if (enemy.y < 250 || enemy.y > WORLD_HEIGHT - 200) enemy.vy *= -1;
-      sprite.setPosition(enemy.x, enemy.y);
+      step.elapsed += delta;
+      const t = Math.min(1, step.elapsed / step.duration), a = worldPoint(step.from), b = worldPoint(step.to);
+      sprite.setPosition(Phaser.Math.Linear(a.x, b.x, t), Phaser.Math.Linear(a.y, b.y, t)).setDepth(sprite.y);
       const actor = sprite.getByName('actor');
-      if (actor instanceof Phaser.GameObjects.Sprite) {
-        setWalk(actor, Math.abs(enemy.vx) + Math.abs(enemy.vy) > 0.5);
-        actor.setFlipX(enemy.vx < 0);
-      }
+      if (actor instanceof Phaser.GameObjects.Sprite) poseWorldActor(actor, directionBetween(step.from, step.to), true, this.time.now);
+      if (t === 1) { Object.assign(enemy, b); this.enemySteps.delete(enemy.id); }
     }
   }
 
@@ -317,9 +349,9 @@ export class GameScene extends Phaser.Scene {
     const state = getState();
     for (const e of state.enemies) {
       if (!e.alive) continue;
-      if (Phaser.Math.Distance.Between(state.worldX, state.worldY, e.x, e.y) < 70) {
+      if (manhattan(worldCell(state.worldX, state.worldY), worldCell(e.x, e.y)) <= 1) {
         this.encounterEnemy = e;
-        this.moveTarget = undefined;
+        this.pauseWorldTravel();
         this.emit({ type: 'encounter', enemy: { id: e.id, kind: e.kind, strength: e.strength } });
         break;
       }
@@ -330,9 +362,8 @@ export class GameScene extends Phaser.Scene {
     const state = getState();
     if (!this.encounterEnemy) return;
     const e = this.encounterEnemy;
-    const ang = Phaser.Math.Angle.Between(e.x, e.y, state.worldX, state.worldY);
-    state.worldX = Phaser.Math.Clamp(state.worldX + Math.cos(ang) * 180, 30, WORLD_WIDTH - 30);
-    state.worldY = Phaser.Math.Clamp(state.worldY + Math.sin(ang) * 180, 30, WORLD_HEIGHT - 30);
+    const point = worldPoint(fleeCell(this.world, worldCell(state.worldX, state.worldY), worldCell(e.x, e.y)));
+    state.worldX = point.x; state.worldY = point.y;
     this.encounterGraceUntil = this.time.now + 5000;
     this.encounterEnemy = undefined;
     this.renderWorld();
@@ -355,6 +386,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   private startBattle(enemy: WorldEnemy): void {
+    this.pauseWorldTravel();
+    this.worldLayer?.tilemap.destroy();
+    this.worldLayer = undefined;
     this.mode = 'battle';
     this.battlePhase = 'player';
     this.battleLog = [];
@@ -429,6 +463,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleResize(): void {
+    if (this.mode === 'world') { this.cameras.main.setZoom(this.defaultWorldZoom()); return; }
     if (this.mode !== 'battle' || !this.battleGrid) return;
     if (this.battlePhase === 'resolving' || this.battlePhase === 'enemy') { this.pendingResize = true; return; }
     const cells = this.battleUnits.map(u => this.unitCell(u));
@@ -1152,7 +1187,20 @@ export class GameScene extends Phaser.Scene {
   }
 
   testMovePartyTo(x: number, y: number): void {
-    const state = getState(); state.worldX = x; state.worldY = y; this.party?.setPosition(x, y); this.checkDiscoveries();
+    this.pauseWorldTravel();
+    const cell = safeWorldCell(this.world, x, y), point = worldPoint(cell), state = getState();
+    state.worldX = point.x; state.worldY = point.y; this.trail = [cell, cell, cell];
+    this.paintParty(cell, cell, 0, false); this.cameras.main.centerOn(point.x, point.y); this.checkDiscoveries();
+  }
+
+  testWorldSnapshot(includeTerrain = false): unknown {
+    const state = getState(), camera = this.cameras.main;
+    return { cell: worldCell(state.worldX, state.worldY), tileSize: WORLD_TILE_SIZE,
+      step: this.worldStep, route: this.worldRoute, facing: this.facing, gridVisible: this.showWorldGrid,
+      camera: { scrollX: camera.scrollX, scrollY: camera.scrollY, zoom: camera.zoom, width: camera.width, height: camera.height },
+      tiles: includeTerrain ? this.world.tiles.map(row => row.map(t => ({ ...t }))) : undefined,
+      entrances: LOCATIONS.map(l => ({ id: l.id, ...locationCell(l.id) })),
+      enemies: state.enemies.filter(e => e.alive).map(e => ({ id: e.id, ...worldCell(e.x, e.y) })) };
   }
 
   testTriggerEncounter(id: string): void {
